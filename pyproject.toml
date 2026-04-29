@@ -1,0 +1,11 @@
+[project]
+name = "gridfinity-designer"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.136.1",
+    "numpy-stl>=3.2.0",
+    "pydantic>=2.13.3",
+    "uvicorn[standard]>=0.46.0",
+]

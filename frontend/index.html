@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Gridfinity Bucket Designer</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div id="app">
+    <header id="toolbar">
+      <strong>Gridfinity Designer</strong>
+      <label>Drawer W <input id="drawerW" type="number" value="500" /></label>
+      <label>Drawer D <input id="drawerD" type="number" value="420" /></label>
+      <label>Grid <input id="gridSize" type="number" value="42" /></label>
+      <label>Bed X <input id="bedX" type="number" value="256" /></label>
+      <label>Bed Y <input id="bedY" type="number" value="256" /></label>
+      <button id="snapToggle" class="active">Snap: ON</button>
+      <button id="exportJson">Export JSON</button>
+      <button id="exportStl">Export STL (selected)</button>
+      <button id="exportBundle">Export Bundle</button>
+      <button id="loadJson">Load JSON</button>
+      <input id="jsonFile" type="file" accept="application/json" hidden />
+      <button id="undoBtn">Undo</button>
+      <button id="redoBtn">Redo</button>
+    </header>
+
+    <aside id="tools">
+      <button data-tool="select" class="active">Select</button>
+      <button data-tool="draw-base">Draw Base</button>
+      <button data-tool="edit-body">Edit Body</button>
+      <button data-tool="delete">Delete</button>
+    </aside>
+
+    <main id="canvasWrap">
+      <svg id="editor" xmlns="http://www.w3.org/2000/svg"></svg>
+    </main>
+
+    <aside id="properties">
+      <h2>Properties</h2>
+      <div id="noSelection">No bucket selected.</div>
+      <div id="bucketProps" hidden>
+        <label>Name <input id="propName" /></label>
+        <label>Height (mm) <input id="propHeight" type="number" value="60" /></label>
+        <label>Wall (mm) <input id="propWall" type="number" step="0.1" value="1.6" /></label>
+        <label>Floor (mm) <input id="propFloor" type="number" step="0.1" value="1.2" /></label>
+        <label>Corner radius <input id="propRadius" type="number" step="0.1" value="3" /></label>
+        <fieldset>
+          <legend>Base cells</legend>
+          <label>x <input id="propBaseX" type="number" /></label>
+          <label>y <input id="propBaseY" type="number" /></label>
+          <label>w <input id="propBaseW" type="number" min="1" /></label>
+          <label>d <input id="propBaseD" type="number" min="1" /></label>
+        </fieldset>
+        <fieldset>
+          <legend>Body (mm)</legend>
+          <label>x <input id="propBodyX" type="number" step="0.5" /></label>
+          <label>y <input id="propBodyY" type="number" step="0.5" /></label>
+          <label>w <input id="propBodyW" type="number" step="0.5" /></label>
+          <label>d <input id="propBodyD" type="number" step="0.5" /></label>
+        </fieldset>
+        <fieldset>
+          <legend>Split</legend>
+          <label class="checkbox"><input id="propNaiveSplit" type="checkbox" /> Naive split oversized export</label>
+        </fieldset>
+        <button id="resetBody">Reset body to base</button>
+        <button id="setGridfinityDefaults">Set to default Gridfinity</button>
+      </div>
+      <h3>Issues</h3>
+      <ul id="issues"></ul>
+    </aside>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
