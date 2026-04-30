@@ -1,74 +1,69 @@
-// Wraps kennetek/gridfinity-rebuilt-openscad's bin builder.
+// Render a kennetek-style Gridfinity bin sized to a fractional-cell body.
 //
-// Builds the FULL bin once, optionally clipping it with an axis-aligned cut
-// box for split parts. Output is translated so the cut piece's bottom-left
-// sits at (0,0).
+// Walls + stacking lip come from kennetek's render_wall(body_size), so the
+// outer profile, lip, and wall thickness match exactly what kennetek would
+// produce for an integer-cell bin of the same outline. The interior cavity
+// uses kennetek's compartment_cutter (rounded with r_f2 fillet at the
+// wall-floor joint) so every inner edge — including any cut-plane edge —
+// has the same fillet as the rest of the bin.
 //
-// Coords (in body-local, before clipping):
-//   (0,0)   bottom-left of body
-//   (gridx*cell_mm, gridy*cell_mm)  top-right
+// Foot pattern is positioned at the user's base cells via gridfinityBase
+// (independent from body extent, so a body can overhang past the base).
 //
-// cut_x0..cut_x1, cut_y0..cut_y1 default to the full body — no clipping.
+// Inter-part split seams subtract a thin slab on the seam side, removing
+// the wall + lip + a sliver of infill so adjacent parts share a continuous
+// interior cavity when assembled.
 
 include <../../vendor/gridfinity-rebuilt-openscad/src/core/standard.scad>
-use <../../vendor/gridfinity-rebuilt-openscad/src/core/gridfinity-rebuilt-utility.scad>
-use <../../vendor/gridfinity-rebuilt-openscad/src/core/gridfinity-rebuilt-holes.scad>
-use <../../vendor/gridfinity-rebuilt-openscad/src/core/bin.scad>
-use <../../vendor/gridfinity-rebuilt-openscad/src/core/cutouts.scad>
-use <../../vendor/gridfinity-rebuilt-openscad/src/helpers/generic-helpers.scad>
-use <../../vendor/gridfinity-rebuilt-openscad/src/helpers/grid.scad>
-use <../../vendor/gridfinity-rebuilt-openscad/src/helpers/grid_element.scad>
+use <../../vendor/gridfinity-rebuilt-openscad/src/core/base.scad>
 use <../../vendor/gridfinity-rebuilt-openscad/src/core/wall.scad>
+use <../../vendor/gridfinity-rebuilt-openscad/src/core/cutouts.scad>
+use <../../vendor/gridfinity-rebuilt-openscad/src/core/gridfinity-rebuilt-holes.scad>
+use <../../vendor/gridfinity-rebuilt-openscad/src/helpers/shapes.scad>
+use <../../vendor/gridfinity-rebuilt-openscad/src/helpers/generic-helpers.scad>
 
 $fa = 4;
 $fs = 0.25;
 
-/* [Grid] */
-gridx = 1;
-gridy = 1;
-gridz = 42;
-gridz_define = 3; // 3 = External mm including lip
-enable_zsnap = false;
+/* [Body] */
+// Body extent in mm — the bin's outer footprint.
+body_w = 84;
+body_d = 42;
+// Total external bin height (foot + body + lip).
+body_h = 42;
+
+/* [Base] */
+// Foot pattern: how many Gridfinity cells, where to place them (mm offset
+// of the foot grid's bottom-left within the body's local origin).
+base_grid_w = 2;
+base_grid_d = 1;
+base_offset_x = 0;
+base_offset_y = 0;
+cell_mm = 42;
+
+/* [Compartment] */
+// scoop is currently the only compartment option exposed; tabs require a
+// grid_element context that we don't establish for fractional bins.
+scoop = 0;
+
+/* [Gridfinity options] */
 include_lip = true;
-
-/* [Compartments] */
-divx = 1;
-divy = 1;
-depth = 0;
-style_tab = 5;
-place_tab = 0;
-scoop = 1;
-cut_cylinders = false;
-cd = 10;
-c_chamfer = 0.5;
-
-/* [Holes] */
-only_corners = false;
-refined_holes = false;
 magnet_holes = false;
 screw_holes = false;
+only_corners = false;
+refined_holes = false;
 crush_ribs = true;
 chamfer_holes = true;
 printable_hole_top = true;
-enable_thumbscrew = false;
 
-cell_mm = 42;
-
-/* [Cut box (for split parts and overflow trim; defaults = no clipping)] */
-cut_x0 = 0;
-cut_y0 = 0;
-cut_x1 = -1;  // <0 means use gridx*cell_mm
-cut_y1 = -1;  // <0 means use gridy*cell_mm
-// Wall thickness used for the seal slabs that close the cavity at any cut
-// face. Two perimeters of 0.4mm extrusion ≈ 0.95 (kennetek's d_wall).
-seal_wall_thickness = 0.95;
-// Per-face seal toggles: true = close cavity with a wall (overhang/body
-// boundary), false = leave cut open so a sibling split part can mate
-// cleanly with one continuous interior. The dispatcher decides.
-seal_x0 = true;
-seal_y0 = true;
-seal_x1 = true;
-seal_y1 = true;
+/* [Split seams] */
+// Subtract the wall on these sides — used by naive split parts so adjacent
+// pieces mate cleanly with one continuous interior. False on every side
+// for a normal bucket.
+seam_x0 = false;
+seam_x1 = false;
+seam_y0 = false;
+seam_y1 = false;
 
 hole_options = bundle_hole_options(
     refined_hole = refined_holes,
@@ -79,118 +74,97 @@ hole_options = bundle_hole_options(
     supportless = printable_hole_top
 );
 
-bin1 = new_bin(
-    grid_size = [gridx, gridy],
-    height_mm = height(gridz, gridz_define, enable_zsnap),
-    fill_height = 0,
-    include_lip = include_lip,
-    hole_options = hole_options,
-    only_corners = only_corners,
-    thumbscrew = enable_thumbscrew,
-    grid_dimensions = [cell_mm, cell_mm]
-);
+// Wall portion height (excluding the stacking lip — render_wall adds it on top).
+wall_h = max(0, body_h - (include_lip ? stacking_lip_height() : 0));
+// Infill height between foot top and wall top.
+infill_h = max(0, wall_h - BASE_HEIGHT);
 
-body_w = gridx * cell_mm;
-body_d = gridy * cell_mm;
+module _foot() {
+    foot_total_w = base_grid_w * cell_mm;
+    foot_total_d = base_grid_d * cell_mm;
+    translate([base_offset_x + foot_total_w / 2,
+               base_offset_y + foot_total_d / 2, 0])
+        gridfinityBase(
+            grid_size = [base_grid_w, base_grid_d],
+            grid_dimensions = [cell_mm, cell_mm],
+            hole_options = hole_options,
+            only_corners = only_corners
+        );
+}
 
-clip_x1 = (cut_x1 < 0) ? body_w : cut_x1;
-clip_y1 = (cut_y1 < 0) ? body_d : cut_y1;
-clip_w = clip_x1 - cut_x0;
-clip_d = clip_y1 - cut_y0;
-
-// `cut_needed` controls whether we wrap the bin in render()+intersection().
-// CGAL booleans on a kennetek bin are expensive (~+100–500 ms per render),
-// so for the common no-cut case we emit bin_render's three top-level outputs
-// (wall, infill, foot) directly — no extra CSG.
-no_cut = (cut_x0 <= 0.001)
-      && (cut_y0 <= 0.001)
-      && (clip_x1 >= body_w - 0.001)
-      && (clip_y1 >= body_d - 0.001);
-
-module full_bin(wrap_render=true) {
-    // bin_render emits multiple top-level objects (wall, infill, foot).
-    // Wrap in render() ONLY when we actually intersect with the cut box,
-    // so the boolean operates on a single solid. For no-cut renders we
-    // skip render() entirely — bin_render's outputs union implicitly when
-    // emitted side by side.
-    if (wrap_render) {
-        render()
-        translate([body_w / 2, body_d / 2, 0])
-        bin_render(bin1) {
-            bin_subdivide(bin1, [divx, divy]) {
-                if (cut_cylinders) {
-                    cut_chamfered_cylinder(cd / 2, cgs(height=depth).z, c_chamfer);
-                } else {
-                    cut_compartment_auto(cgs(height=depth), style_tab, place_tab != 0, scoop);
-                }
-            }
-        }
-    } else {
-        translate([body_w / 2, body_d / 2, 0])
-        bin_render(bin1) {
-            bin_subdivide(bin1, [divx, divy]) {
-                if (cut_cylinders) {
-                    cut_chamfered_cylinder(cd / 2, cgs(height=depth).z, c_chamfer);
-                } else {
-                    cut_compartment_auto(cgs(height=depth), style_tab, place_tab != 0, scoop);
-                }
-            }
-        }
+module _infill() {
+    // Solid block from foot top to wall top — what the compartment cutter
+    // carves into.
+    if (infill_h > 0) {
+        translate([body_w / 2, body_d / 2, BASE_HEIGHT])
+        linear_extrude(infill_h)
+            rounded_square(
+                [body_w - TOLLERANCE, body_d - TOLLERANCE],
+                BASE_TOP_RADIUS, center=true);
     }
 }
 
-// Total bin height = wall height + stacking lip (if enabled). Slabs need to
-// cover the lip region too — when the cut is inside the bin, the cut plane
-// passes through the lip and the slab must seal it.
-slab_h = height(gridz, gridz_define, enable_zsnap)
-       + (include_lip ? stacking_lip_height() : 0);
-
-eps = 0.001;
-left_cut  = cut_x0 > eps;
-right_cut = clip_x1 < body_w - eps;
-front_cut = cut_y0 > eps;
-back_cut  = clip_y1 < body_d - eps;
-
-// Clamp slab perpendicular extents to the bin's natural outer rect (kennetek
-// insets cell boundaries by BASE_GAP_MM/2 = 0.25mm) so the slab does not
-// stick out past the bin profile.
-gap = BASE_GAP_MM[0] / 2;
-slab_x_lo = max(cut_x0, gap);
-slab_x_hi = min(clip_x1, body_w - gap);
-slab_y_lo = max(cut_y0, gap);
-slab_y_hi = min(clip_y1, body_d - gap);
-
-// Seal slabs: thin walls placed inside the bin at each cut face so the
-// cavity does not get exposed when intersection() trims the bounding-grid
-// extension. Combined with the bin's own outer-wall geometry this gives a
-// continuous wall along every body edge — the cut becomes a normal wall,
-// not an open hole into the cavity.
-module seal_slabs() {
-    if (left_cut  && seal_x0)
-        translate([cut_x0, slab_y_lo, 0])
-            cube([seal_wall_thickness, slab_y_hi - slab_y_lo, slab_h]);
-    if (right_cut && seal_x1)
-        translate([clip_x1 - seal_wall_thickness, slab_y_lo, 0])
-            cube([seal_wall_thickness, slab_y_hi - slab_y_lo, slab_h]);
-    if (front_cut && seal_y0)
-        translate([slab_x_lo, cut_y0, 0])
-            cube([slab_x_hi - slab_x_lo, seal_wall_thickness, slab_h]);
-    if (back_cut  && seal_y1)
-        translate([slab_x_lo, clip_y1 - seal_wall_thickness, 0])
-            cube([slab_x_hi - slab_x_lo, seal_wall_thickness, slab_h]);
+module _wall_ring() {
+    // Wall annulus from z=0 up to wall_h, plus the stacking lip on top
+    // when include_lip is enabled. Mirrors kennetek's render_wall but with
+    // the lip toggleable.
+    grid_size_mm = [body_w, body_d];
+    translate([body_w / 2, body_d / 2, 0])
+        linear_extrude(wall_h)
+            difference() {
+                rounded_square(grid_size_mm, BASE_TOP_RADIUS, center=true);
+                rounded_square(
+                    [grid_size_mm.x - 2 * d_wall, grid_size_mm.y - 2 * d_wall],
+                    BASE_TOP_RADIUS, center=true);
+            }
+    if (include_lip) {
+        translate([body_w / 2, body_d / 2, 0])
+            sweep_rounded([
+                grid_size_mm.x - 2 * BASE_TOP_RADIUS,
+                grid_size_mm.y - 2 * BASE_TOP_RADIUS,
+            ])
+                _profile_wall(wall_h);
+    }
 }
 
-if (no_cut) {
-    // Fast path: emit bin_render directly, no CGAL intersection.
-    full_bin(wrap_render=false);
-} else {
-    translate([-cut_x0, -cut_y0, 0])
-    intersection() {
-        union() {
-            full_bin();
-            seal_slabs();
-        }
-        translate([cut_x0, cut_y0, -1])
-            cube([clip_w, clip_d, slab_h + 100]);
+module _compartment_cut() {
+    cut_w = body_w - 2 * d_wall;
+    cut_d = body_d - 2 * d_wall;
+    cut_z = infill_h;
+    if (cut_w > 0 && cut_d > 0 && cut_z > 0) {
+        // compartment_cutter is anchored at z=top, extends downward by size_mm.z.
+        translate([body_w / 2, body_d / 2, BASE_HEIGHT + cut_z])
+            compartment_cutter([cut_w, cut_d, cut_z], scoop_percent=scoop, tab_width=0);
     }
+}
+
+module _seam_cutter() {
+    // Only cut wall + lip + cavity area above z = BASE_HEIGHT. Below that
+    // the foot + bridge structure stays intact so adjacent split parts butt
+    // together edge-to-edge with no gap at the bottom.
+    cut_z0 = BASE_HEIGHT;
+    cut_z1 = body_h + 5;
+    cut_depth = d_wall + STACKING_LIP_SIZE.x + 0.5;
+    if (seam_x0)
+        translate([0, -1, cut_z0])
+            cube([cut_depth, body_d + 2, cut_z1 - cut_z0]);
+    if (seam_x1)
+        translate([body_w - cut_depth, -1, cut_z0])
+            cube([cut_depth, body_d + 2, cut_z1 - cut_z0]);
+    if (seam_y0)
+        translate([-1, 0, cut_z0])
+            cube([body_w + 2, cut_depth, cut_z1 - cut_z0]);
+    if (seam_y1)
+        translate([-1, body_d - cut_depth, cut_z0])
+            cube([body_w + 2, cut_depth, cut_z1 - cut_z0]);
+}
+
+difference() {
+    union() {
+        _foot();
+        _infill();
+        _wall_ring();
+    }
+    _compartment_cut();
+    _seam_cutter();
 }

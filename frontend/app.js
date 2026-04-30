@@ -460,6 +460,7 @@ window.addEventListener("mouseup", () => {
       only_corners_holes: false,
       scoop: 0,
       style_tab: 5,
+      inner_fillet_mm: 3.5,
     });
     selectBucket(id);
   }

@@ -36,106 +36,58 @@ STANDARD_SCAD = REPO_ROOT / "backend" / "scad" / "standard.scad"
 OVERFLOW_SCAD = REPO_ROOT / "backend" / "scad" / "overflow.scad"
 BASEPLATE_SCAD = REPO_ROOT / "backend" / "scad" / "baseplate.scad"
 
-# Kennetek's gridz_define mode 3 = "External mm" (height parameter is total
-# bin height in mm including the foot, excluding the stacking lip).
-GRIDZ_DEFINE_EXTERNAL_MM = 3
+def _render_geometry(bucket: Bucket, project: Project) -> dict:
+    """Compute the params for ``standard.scad``'s fractional-bin module.
 
+    Body: the bucket's body extent (or split part's slice). The bin renders
+    walls + lip + cavity at this exact footprint via kennetek's primitives,
+    so the result is geometrically a kennetek bin of the body's shape.
 
-def _effective_geometry(bucket: Bucket) -> tuple:
-    """Resolve geometry to render.
+    Base: foot grid placed at the user's base cells, offset within the body
+    so overhang regions have wall but no foot.
 
-    For non-split buckets: bucket's own body + base, no parent cut_box.
-    For split parts: parent (un-split) body + base, plus part's cut_box in
-    parent-body-local coords.
-    """
-    if bucket.cut_box_mm is not None and bucket.parent_body_mm is not None:
-        body = bucket.parent_body_mm
-        base = bucket.parent_base_cells or bucket.base_cells
-        return body, base, bucket.cut_box_mm
-    return bucket.body_mm, bucket.base_cells, None
-
-
-def _bounding_grid_and_cut(bucket: Bucket, project: Project) -> tuple[int, int, list[float], dict]:
-    """Compute the smallest integer-cell grid containing both body and base,
-    a cut box (in bounding-grid-local mm) that selects just this bucket, and
-    seal flags for each cut face.
-
-    Seal flags say which cut faces are at the bucket's outer body boundary
-    (so the cavity should be sealed with a wall) vs. inter-part seams from
-    a naive split (so the cavity should stay open and adjacent parts butt
-    together cleanly with one continuous interior).
+    Seam flags: for naive-split parts, true on sides where the part is cut
+    from the parent (inter-part seam). The wall is removed there so adjacent
+    pieces share a continuous interior cavity.
     """
     cell = project.grid.cell_mm
-    body, base, cut_box = _effective_geometry(bucket)
+    body = bucket.body_mm
+    base = bucket.base_cells
 
-    base_x0, base_y0 = base.x * cell, base.y * cell
-    base_x1, base_y1 = (base.x + base.w) * cell, (base.y + base.d) * cell
-    body_x0, body_y0 = body.x, body.y
-    body_x1, body_y1 = body.x + body.w, body.y + body.d
+    base_offset_x = base.x * cell - body.x
+    base_offset_y = base.y * cell - body.y
 
-    union_x0 = min(base_x0, body_x0)
-    union_y0 = min(base_y0, body_y0)
-    union_x1 = max(base_x1, body_x1)
-    union_y1 = max(base_y1, body_y1)
-    bgx0 = math.floor(union_x0 / cell) * cell
-    bgy0 = math.floor(union_y0 / cell) * cell
-    bgx1 = math.ceil(union_x1 / cell) * cell
-    bgy1 = math.ceil(union_y1 / cell) * cell
-    grid_w = round((bgx1 - bgx0) / cell)
-    grid_d = round((bgy1 - bgy0) / cell)
+    seam = {"x0": False, "x1": False, "y0": False, "y1": False}
+    parent = bucket.parent_body_mm
+    if parent is not None:
+        eps = 1e-3
+        seam["x0"] = abs(body.x - parent.x) > eps
+        seam["x1"] = abs((body.x + body.w) - (parent.x + parent.w)) > eps
+        seam["y0"] = abs(body.y - parent.y) > eps
+        seam["y1"] = abs((body.y + body.d) - (parent.y + parent.d)) > eps
 
-    # Body extent in bounding-grid-local coords.
-    body_bg = [body_x0 - bgx0, body_y0 - bgy0, body_x1 - bgx0, body_y1 - bgy0]
-
-    if cut_box is None:
-        cut = body_bg[:]
-    else:
-        cut = [
-            body_x0 + cut_box[0] - bgx0,
-            body_y0 + cut_box[1] - bgy0,
-            body_x0 + cut_box[2] - bgx0,
-            body_y0 + cut_box[3] - bgy0,
-        ]
-
-    # Seal a cut face only when it coincides with the parent body's edge.
-    # Inter-part seams (cuts inside the body) stay open.
-    eps = 1e-3
-    seal = {
-        "x0": abs(cut[0] - body_bg[0]) < eps,
-        "y0": abs(cut[1] - body_bg[1]) < eps,
-        "x1": abs(cut[2] - body_bg[2]) < eps,
-        "y1": abs(cut[3] - body_bg[3]) < eps,
-    }
-    return grid_w, grid_d, cut, seal
-
-
-def _standard_params(bucket: Bucket, project: Project, grid_w: int, grid_d: int, cut_box: list[float], seal: dict) -> dict:
-    """Parameter overrides for backend/scad/standard.scad."""
     return {
-        "gridx": int(grid_w),
-        "gridy": int(grid_d),
-        "gridz": float(bucket.height_mm),
-        "gridz_define": GRIDZ_DEFINE_EXTERNAL_MM,
-        "enable_zsnap": False,
-        "include_lip": bucket.include_lip,
-        "magnet_holes": bucket.magnet_holes,
-        "screw_holes": bucket.screw_holes,
-        "only_corners": bucket.only_corners_holes,
+        "body_w": float(body.w),
+        "body_d": float(body.d),
+        "body_h": float(bucket.height_mm),
+        "base_grid_w": int(base.w),
+        "base_grid_d": int(base.d),
+        "base_offset_x": float(base_offset_x),
+        "base_offset_y": float(base_offset_y),
+        "cell_mm": float(cell),
         "scoop": float(bucket.scoop),
-        "style_tab": int(bucket.style_tab),
-        "divx": 1,
-        "divy": 1,
+        "include_lip": bool(bucket.include_lip),
+        "magnet_holes": bool(bucket.magnet_holes),
+        "screw_holes": bool(bucket.screw_holes),
+        "only_corners": bool(bucket.only_corners_holes),
         "refined_holes": False,
-        "cell_mm": float(project.grid.cell_mm),
-        "cut_x0": float(cut_box[0]),
-        "cut_y0": float(cut_box[1]),
-        "cut_x1": float(cut_box[2]),
-        "cut_y1": float(cut_box[3]),
-        "seal_x0": bool(seal["x0"]),
-        "seal_y0": bool(seal["y0"]),
-        "seal_x1": bool(seal["x1"]),
-        "seal_y1": bool(seal["y1"]),
+        "seam_x0": bool(seam["x0"]),
+        "seam_x1": bool(seam["x1"]),
+        "seam_y0": bool(seam["y0"]),
+        "seam_y1": bool(seam["y1"]),
     }
+
+
 
 
 def generate_stl_bytes(bucket: Bucket, project: Project) -> bytes:
@@ -152,12 +104,8 @@ def generate_stl_bytes(bucket: Bucket, project: Project) -> bytes:
         )
         return legacy_cad.generate_stl_bytes(bucket, project)
 
-    grid_w, grid_d, cut_box, seal = _bounding_grid_and_cut(bucket, project)
     try:
-        return render_stl(
-            STANDARD_SCAD,
-            _standard_params(bucket, project, grid_w, grid_d, cut_box, seal),
-        )
+        return render_stl(STANDARD_SCAD, _render_geometry(bucket, project))
     except OpenSCADUnavailable:
         return legacy_cad.generate_stl_bytes(bucket, project)
 

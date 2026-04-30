@@ -92,10 +92,15 @@ def test_split_parts_butt_together_with_sealed_cuts() -> None:
 
 
 @pytest.mark.usefixtures("openscad_required")
-def test_disable_lip_lowers_top_z() -> None:
+def test_lip_toggle_preserves_total_height() -> None:
+    """height_mm is the bin's total external height. Toggling the lip changes
+    whether the top is the lip's outer profile or a flat wall, but the total
+    height stays the same — we shrink the wall portion by the lip height
+    when the lip is enabled."""
+    with_lip = make_bucket("with_lip", 0, 0, base_w=1, base_d=1, height_mm=42)
     no_lip = make_bucket("no_lip", 0, 0, base_w=1, base_d=1, height_mm=42)
     no_lip.include_lip = False
-    mesh = _load_mesh(generate_stl_bytes(no_lip, make_project(no_lip)))
-    bz = mesh.bounds[1, 2] - mesh.bounds[0, 2]
-    # Without lip, height equals (height_mm - lip_height) ~= 38.45 mm.
-    assert bz < 40.0
+    z_with = _load_mesh(generate_stl_bytes(with_lip, make_project(with_lip))).bounds[1, 2]
+    z_no   = _load_mesh(generate_stl_bytes(no_lip, make_project(no_lip))).bounds[1, 2]
+    assert abs(z_with - 42.0) < 0.5
+    assert abs(z_no - 42.0) < 0.5
