@@ -41,14 +41,21 @@ html, body { margin: 0; height: 100%; font-family: var(--font); color: var(--tex
   grid-area: tb;
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 0 18px;
+  gap: 10px;
+  padding: 0 14px;
   background: linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 100%);
   color: var(--text-on-dark);
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
   font-size: 13px;
   box-shadow: var(--shadow-md);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
 }
+#toolbar::-webkit-scrollbar { height: 4px; }
+#toolbar::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.18); border-radius: 2px; }
+#toolbar > * { flex-shrink: 0; }
 #toolbar .brand {
   font-weight: 700;
   letter-spacing: 0.4px;
