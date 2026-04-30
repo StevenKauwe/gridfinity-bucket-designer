@@ -62,6 +62,13 @@ cut_y1 = -1;  // <0 means use gridy*cell_mm
 // Wall thickness used for the seal slabs that close the cavity at any cut
 // face. Two perimeters of 0.4mm extrusion ≈ 0.95 (kennetek's d_wall).
 seal_wall_thickness = 0.95;
+// Per-face seal toggles: true = close cavity with a wall (overhang/body
+// boundary), false = leave cut open so a sibling split part can mate
+// cleanly with one continuous interior. The dispatcher decides.
+seal_x0 = true;
+seal_y0 = true;
+seal_x1 = true;
+seal_y1 = true;
 
 hole_options = bundle_hole_options(
     refined_hole = refined_holes,
@@ -159,16 +166,16 @@ slab_y_hi = min(clip_y1, body_d - gap);
 // continuous wall along every body edge — the cut becomes a normal wall,
 // not an open hole into the cavity.
 module seal_slabs() {
-    if (left_cut)
+    if (left_cut  && seal_x0)
         translate([cut_x0, slab_y_lo, 0])
             cube([seal_wall_thickness, slab_y_hi - slab_y_lo, slab_h]);
-    if (right_cut)
+    if (right_cut && seal_x1)
         translate([clip_x1 - seal_wall_thickness, slab_y_lo, 0])
             cube([seal_wall_thickness, slab_y_hi - slab_y_lo, slab_h]);
-    if (front_cut)
+    if (front_cut && seal_y0)
         translate([slab_x_lo, cut_y0, 0])
             cube([slab_x_hi - slab_x_lo, seal_wall_thickness, slab_h]);
-    if (back_cut)
+    if (back_cut  && seal_y1)
         translate([slab_x_lo, clip_y1 - seal_wall_thickness, 0])
             cube([slab_x_hi - slab_x_lo, seal_wall_thickness, slab_h]);
 }

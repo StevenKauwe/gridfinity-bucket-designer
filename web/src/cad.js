@@ -155,9 +155,11 @@ export function boundingGridAndCut(bucket, project) {
   const gridW = Math.round((bgx1 - bgx0) / cell);
   const gridD = Math.round((bgy1 - bgy0) / cell);
 
+  // Body extent in bounding-grid-local coords.
+  const bodyBg = [bodyX0 - bgx0, bodyY0 - bgy0, bodyX1 - bgx0, bodyY1 - bgy0];
   let cut;
   if (!cutBox) {
-    cut = [bodyX0 - bgx0, bodyY0 - bgy0, bodyX1 - bgx0, bodyY1 - bgy0];
+    cut = bodyBg.slice();
   } else {
     cut = [
       bodyX0 + cutBox[0] - bgx0,
@@ -166,10 +168,20 @@ export function boundingGridAndCut(bucket, project) {
       bodyY0 + cutBox[3] - bgy0,
     ];
   }
-  return { gridW, gridD, cut };
+  // Seal a cut face only when it coincides with the body's outer edge —
+  // i.e. it's the bucket boundary (overhang). Inter-part seams stay open
+  // so adjacent split parts share one continuous interior.
+  const eps = 1e-3;
+  const seal = {
+    x0: Math.abs(cut[0] - bodyBg[0]) < eps,
+    y0: Math.abs(cut[1] - bodyBg[1]) < eps,
+    x1: Math.abs(cut[2] - bodyBg[2]) < eps,
+    y1: Math.abs(cut[3] - bodyBg[3]) < eps,
+  };
+  return { gridW, gridD, cut, seal };
 }
 
-function standardParams(bucket, project, gridW, gridD, cut) {
+function standardParams(bucket, project, gridW, gridD, cut, seal) {
   return {
     gridx: gridW,
     gridy: gridD,
@@ -190,12 +202,16 @@ function standardParams(bucket, project, gridW, gridD, cut) {
     cut_y0: cut[1],
     cut_x1: cut[2],
     cut_y1: cut[3],
+    seal_x0: !!seal.x0,
+    seal_y0: !!seal.y0,
+    seal_x1: !!seal.x1,
+    seal_y1: !!seal.y1,
   };
 }
 
 export async function generateBucketStl(bucket, project) {
-  const { gridW, gridD, cut } = boundingGridAndCut(bucket, project);
-  return cachedRender(STANDARD_SCAD, standardParams(bucket, project, gridW, gridD, cut));
+  const { gridW, gridD, cut, seal } = boundingGridAndCut(bucket, project);
+  return cachedRender(STANDARD_SCAD, standardParams(bucket, project, gridW, gridD, cut, seal));
 }
 
 export async function generateBaseplateStl(

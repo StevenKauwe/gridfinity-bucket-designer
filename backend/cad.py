@@ -55,25 +55,24 @@ def _effective_geometry(bucket: Bucket) -> tuple:
     return bucket.body_mm, bucket.base_cells, None
 
 
-def _bounding_grid_and_cut(bucket: Bucket, project: Project) -> tuple[int, int, list[float]]:
+def _bounding_grid_and_cut(bucket: Bucket, project: Project) -> tuple[int, int, list[float], dict]:
     """Compute the smallest integer-cell grid containing both body and base,
-    and a cut box (in bounding-grid-local mm) that selects just this bucket.
+    a cut box (in bounding-grid-local mm) that selects just this bucket, and
+    seal flags for each cut face.
 
-    Strategy: pad the bucket up to a cell-aligned bounding grid, render that
-    as a normal kennetek bin, and let SCAD intersect with the cut box to
-    trim back to the actual body extent. Overflow buckets become sliced
-    standard bins — partial feet on overflow edges, no special geometry.
+    Seal flags say which cut faces are at the bucket's outer body boundary
+    (so the cavity should be sealed with a wall) vs. inter-part seams from
+    a naive split (so the cavity should stay open and adjacent parts butt
+    together cleanly with one continuous interior).
     """
     cell = project.grid.cell_mm
     body, base, cut_box = _effective_geometry(bucket)
 
-    # Drawer-coord bounds of body and base.
     base_x0, base_y0 = base.x * cell, base.y * cell
     base_x1, base_y1 = (base.x + base.w) * cell, (base.y + base.d) * cell
     body_x0, body_y0 = body.x, body.y
     body_x1, body_y1 = body.x + body.w, body.y + body.d
 
-    # Smallest cell-aligned grid that contains body ∪ base.
     union_x0 = min(base_x0, body_x0)
     union_y0 = min(base_y0, body_y0)
     union_x1 = max(base_x1, body_x1)
@@ -85,22 +84,32 @@ def _bounding_grid_and_cut(bucket: Bucket, project: Project) -> tuple[int, int, 
     grid_w = round((bgx1 - bgx0) / cell)
     grid_d = round((bgy1 - bgy0) / cell)
 
+    # Body extent in bounding-grid-local coords.
+    body_bg = [body_x0 - bgx0, body_y0 - bgy0, body_x1 - bgx0, body_y1 - bgy0]
+
     if cut_box is None:
-        # Slice down to the body extent.
-        cut = [body_x0 - bgx0, body_y0 - bgy0, body_x1 - bgx0, body_y1 - bgy0]
+        cut = body_bg[:]
     else:
-        # Split part: cut_box is in parent-body-local coords; shift to
-        # bounding-grid-local coords.
         cut = [
             body_x0 + cut_box[0] - bgx0,
             body_y0 + cut_box[1] - bgy0,
             body_x0 + cut_box[2] - bgx0,
             body_y0 + cut_box[3] - bgy0,
         ]
-    return grid_w, grid_d, cut
+
+    # Seal a cut face only when it coincides with the parent body's edge.
+    # Inter-part seams (cuts inside the body) stay open.
+    eps = 1e-3
+    seal = {
+        "x0": abs(cut[0] - body_bg[0]) < eps,
+        "y0": abs(cut[1] - body_bg[1]) < eps,
+        "x1": abs(cut[2] - body_bg[2]) < eps,
+        "y1": abs(cut[3] - body_bg[3]) < eps,
+    }
+    return grid_w, grid_d, cut, seal
 
 
-def _standard_params(bucket: Bucket, project: Project, grid_w: int, grid_d: int, cut_box: list[float]) -> dict:
+def _standard_params(bucket: Bucket, project: Project, grid_w: int, grid_d: int, cut_box: list[float], seal: dict) -> dict:
     """Parameter overrides for backend/scad/standard.scad."""
     return {
         "gridx": int(grid_w),
@@ -122,6 +131,10 @@ def _standard_params(bucket: Bucket, project: Project, grid_w: int, grid_d: int,
         "cut_y0": float(cut_box[1]),
         "cut_x1": float(cut_box[2]),
         "cut_y1": float(cut_box[3]),
+        "seal_x0": bool(seal["x0"]),
+        "seal_y0": bool(seal["y0"]),
+        "seal_x1": bool(seal["x1"]),
+        "seal_y1": bool(seal["y1"]),
     }
 
 
@@ -139,10 +152,11 @@ def generate_stl_bytes(bucket: Bucket, project: Project) -> bytes:
         )
         return legacy_cad.generate_stl_bytes(bucket, project)
 
-    grid_w, grid_d, cut_box = _bounding_grid_and_cut(bucket, project)
+    grid_w, grid_d, cut_box, seal = _bounding_grid_and_cut(bucket, project)
     try:
         return render_stl(
-            STANDARD_SCAD, _standard_params(bucket, project, grid_w, grid_d, cut_box),
+            STANDARD_SCAD,
+            _standard_params(bucket, project, grid_w, grid_d, cut_box, seal),
         )
     except OpenSCADUnavailable:
         return legacy_cad.generate_stl_bytes(bucket, project)
