@@ -1,0 +1,17 @@
+{
+  "name": "gridfinity-designer-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser-only Gridfinity Bucket Designer (WASM render via openscad-wasm).",
+  "scripts": {
+    "dev": "python3 -m http.server 8000",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "e2e:install": "playwright install --with-deps chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "vitest": "^2.1.8"
+  }
+}

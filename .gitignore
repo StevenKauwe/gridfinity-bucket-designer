@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+*.stl
+!tests/fixtures/*.stl
+
+# Web build
+node_modules/
+web/test-results/
+web/playwright-report/
+test-results/
+playwright-report/

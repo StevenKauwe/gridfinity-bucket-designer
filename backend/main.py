@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import math
 import zipfile
 from pathlib import Path
@@ -9,14 +10,35 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from .cad import generate_stl_bytes
+from .cad import generate_baseplate_stl, generate_stl_bytes
 from .models import Bucket, ExportRequest, Project, RectCells, RectMM, ValidateResponse
+from .openscad import openscad_version
 from .validate import validate_project
 
 ROOT = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = ROOT / "frontend"
 
-app = FastAPI(title="Gridfinity Bucket Designer")
+log = logging.getLogger(__name__)
+
+
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def lifespan(app):
+    version = openscad_version()
+    if version:
+        log.info("OpenSCAD detected: %s", version)
+    else:
+        log.warning(
+            "OpenSCAD not found. Exports will use the legacy hand-rolled "
+            "renderer (approximate geometry). Install OpenSCAD for spec-correct "
+            "Gridfinity output.",
+        )
+    yield
+
+
+app = FastAPI(title="Gridfinity Bucket Designer", lifespan=lifespan)
 
 
 def _bucket_needs_xy_split(bucket: Bucket, project: Project) -> bool:
@@ -107,6 +129,8 @@ def _naive_split_bucket(bucket: Bucket, project: Project) -> list[Bucket]:
     )
     parts: list[Bucket] = []
 
+    n_rows = len(y_ranges)
+    n_cols = len(x_ranges)
     for row, (base_y, base_d, body_y, body_d) in enumerate(y_ranges, start=1):
         for col, (base_x, base_w, body_x, body_w) in enumerate(x_ranges, start=1):
             part = bucket.model_copy(deep=True)
@@ -119,6 +143,17 @@ def _naive_split_bucket(bucket: Bucket, project: Project) -> list[Bucket]:
                 w=base_w,
                 d=base_d,
             )
+            # Tell the renderer to build the parent (un-split) bucket and
+            # clip with this part's bounding box. OpenSCAD intersection seals
+            # the cut faces, so neighboring parts butt together cleanly.
+            part.parent_body_mm = bucket.body_mm.model_copy()
+            part.parent_base_cells = bucket.base_cells.model_copy()
+            part.cut_box_mm = [
+                body_x - bucket.body_mm.x,
+                body_y - bucket.body_mm.y,
+                body_x + body_w - bucket.body_mm.x,
+                body_y + body_d - bucket.body_mm.y,
+            ]
             parts.append(part)
 
     return parts
@@ -168,6 +203,107 @@ def api_export_stl(req: ExportRequest):
         content=buf.getvalue(),
         media_type="application/zip",
         headers={"Content-Disposition": 'attachment; filename="buckets.zip"'},
+    )
+
+
+def _baseplate_split_ranges(total_cells: int, bed_size: float, cell: float) -> list[tuple[int, int]]:
+    """Return [(start_cell, count), ...] spans whose width fits the bed."""
+    max_cells = max(1, math.floor(bed_size / cell))
+    ranges: list[tuple[int, int]] = []
+    cursor = 0
+    while cursor < total_cells:
+        count = min(max_cells, total_cells - cursor)
+        ranges.append((cursor, count))
+        cursor += count
+    return ranges
+
+
+def _baseplate_exports(
+    project: Project,
+    *,
+    grid_w: int,
+    grid_d: int,
+    style_plate: int,
+    style_hole: int,
+    enable_magnet: bool,
+    split: bool,
+) -> list[tuple[str, bytes]]:
+    cell = project.grid.cell_mm
+    if split:
+        x_spans = _baseplate_split_ranges(grid_w, project.printer.bed_x_mm, cell)
+        y_spans = _baseplate_split_ranges(grid_d, project.printer.bed_y_mm, cell)
+    else:
+        x_spans = [(0, grid_w)]
+        y_spans = [(0, grid_d)]
+
+    exports: list[tuple[str, bytes]] = []
+    for row, (y0_cells, dy_cells) in enumerate(y_spans, start=1):
+        for col, (x0_cells, dx_cells) in enumerate(x_spans, start=1):
+            cut_box = [
+                x0_cells * cell,
+                y0_cells * cell,
+                (x0_cells + dx_cells) * cell,
+                (y0_cells + dy_cells) * cell,
+            ]
+            data = generate_baseplate_stl(
+                project,
+                grid_w=grid_w,
+                grid_d=grid_d,
+                cut_box=cut_box,
+                style_plate=style_plate,
+                style_hole=style_hole,
+                enable_magnet=enable_magnet,
+            )
+            name = f"baseplate-{row}-{col}.stl" if (len(x_spans) > 1 or len(y_spans) > 1) else "baseplate.stl"
+            exports.append((name, data))
+    return exports
+
+
+@app.post("/api/export/baseplate")
+def api_export_baseplate(
+    project: Project,
+    style_plate: int = 0,
+    style_hole: int = 0,
+    enable_magnet: bool = False,
+    split: bool = True,
+):
+    """Render a Gridfinity baseplate covering the drawer's grid.
+
+    Query params:
+      style_plate: 0=thin, 1=weighted, 2=skeletonized, 3=screw-together,
+                   4=screw-together-minimal
+      style_hole:  0=none, 1=countersink, 2=counterbore (for drawer mount)
+      enable_magnet: add magnet pockets
+      split: if True, split into build-plate-sized chunks when too large
+    """
+    cell = project.grid.cell_mm
+    grid_w = math.floor(project.drawer.width_mm / cell)
+    grid_d = math.floor(project.drawer.depth_mm / cell)
+    if grid_w <= 0 or grid_d <= 0:
+        raise HTTPException(400, "Drawer too small for any baseplate cell")
+
+    exports = _baseplate_exports(
+        project,
+        grid_w=grid_w, grid_d=grid_d,
+        style_plate=style_plate, style_hole=style_hole,
+        enable_magnet=enable_magnet, split=split,
+    )
+
+    if len(exports) == 1:
+        name, data = exports[0]
+        return Response(
+            content=data,
+            media_type="model/stl",
+            headers={"Content-Disposition": f'attachment; filename="{name}"'},
+        )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, data in exports:
+            zf.writestr(name, data)
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="baseplate.zip"'},
     )
 
 

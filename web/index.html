@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Gridfinity Bucket Designer</title>
+  <link rel="stylesheet" href="./style.css" />
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.169/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="app">
+    <header id="toolbar">
+      <span class="brand">Gridfinity Designer</span>
+
+      <span class="group" title="Drawer interior dimensions">
+        <label>Drawer
+          <input id="drawerW" type="number" value="500" title="Width (mm)" />
+          <input id="drawerD" type="number" value="420" title="Depth (mm)" />
+        </label>
+      </span>
+
+      <span class="group" title="Gridfinity cell size">
+        <label>Grid <input id="gridSize" type="number" value="42" /></label>
+      </span>
+
+      <span class="group" title="Printer build plate (used for naive split)">
+        <label>Bed
+          <input id="bedX" type="number" value="256" />
+          <input id="bedY" type="number" value="256" />
+        </label>
+      </span>
+
+      <span class="group">
+        <button id="snapToggle" class="active">Snap: ON</button>
+        <button id="undoBtn" title="Undo (⌘Z)">Undo</button>
+        <button id="redoBtn" title="Redo (⌘⇧Z)">Redo</button>
+      </span>
+
+      <span class="group">
+        <button id="loadJson">Load JSON</button>
+        <button id="exportJson">Save JSON</button>
+        <input id="jsonFile" type="file" accept="application/json" hidden />
+      </span>
+
+      <span class="group">
+        <button id="exportStl" class="primary">Export STL</button>
+        <button id="exportBaseplate">Baseplate</button>
+        <button id="exportBundle">Bundle</button>
+      </span>
+    </header>
+
+    <aside id="tools">
+      <button data-tool="select" class="active" title="Select / move (V)">
+        <span class="icon">↖</span><span>Select</span>
+      </button>
+      <button data-tool="draw-base" title="Draw a Gridfinity base footprint (D)">
+        <span class="icon">▭</span><span>Draw</span>
+      </button>
+      <button data-tool="edit-body" title="Resize body separately from base (E)">
+        <span class="icon">⤢</span><span>Body</span>
+      </button>
+      <button data-tool="delete" title="Click a bucket to delete it (X)">
+        <span class="icon">✕</span><span>Delete</span>
+      </button>
+    </aside>
+
+    <main id="canvasWrap">
+      <svg id="editor" xmlns="http://www.w3.org/2000/svg"></svg>
+      <span id="status"></span>
+    </main>
+
+    <aside id="properties">
+      <h2>Properties</h2>
+      <div id="noSelection">Select or draw a bucket to edit its properties.</div>
+      <div id="bucketProps" hidden>
+        <label>Name <input id="propName" /></label>
+
+        <fieldset>
+          <legend>Bin</legend>
+          <label>Height (mm) <input id="propHeight" type="number" value="42" step="0.5" /></label>
+          <label>Wall (mm) <input id="propWall" type="number" step="0.05" value="0.95" /></label>
+          <label>Floor (mm) <input id="propFloor" type="number" step="0.05" value="0.7" /></label>
+          <label>Corner radius <input id="propRadius" type="number" step="0.05" value="3.75" /></label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Base cells</legend>
+          <label>x <input id="propBaseX" type="number" /></label>
+          <label>y <input id="propBaseY" type="number" /></label>
+          <label>w <input id="propBaseW" type="number" min="1" /></label>
+          <label>d <input id="propBaseD" type="number" min="1" /></label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Body (mm)</legend>
+          <label>x <input id="propBodyX" type="number" step="0.5" /></label>
+          <label>y <input id="propBodyY" type="number" step="0.5" /></label>
+          <label>w <input id="propBodyW" type="number" step="0.5" /></label>
+          <label>d <input id="propBodyD" type="number" step="0.5" /></label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Gridfinity options</legend>
+          <label class="checkbox"><input id="propIncludeLip" type="checkbox" checked /> Stackable top lip</label>
+          <label class="checkbox"><input id="propMagnetHoles" type="checkbox" /> Magnet holes</label>
+          <label class="checkbox"><input id="propScrewHoles" type="checkbox" /> Screw holes</label>
+          <label class="checkbox"><input id="propOnlyCornersHoles" type="checkbox" /> Only corner holes</label>
+          <label>Scoop (0–1) <input id="propScoop" type="number" min="0" max="1" step="0.1" value="0" /></label>
+          <label>Tab style
+            <select id="propStyleTab">
+              <option value="0">Full</option>
+              <option value="1">Auto</option>
+              <option value="2">Left</option>
+              <option value="3">Center</option>
+              <option value="4">Right</option>
+              <option value="5" selected>None</option>
+            </select>
+          </label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Split</legend>
+          <label class="checkbox"><input id="propNaiveSplit" type="checkbox" /> Naive split oversized export</label>
+        </fieldset>
+
+        <button id="previewStl" class="primary">Preview 3D</button>
+        <button id="resetBody">Reset body to base</button>
+        <button id="setGridfinityDefaults">Reset to Gridfinity defaults</button>
+      </div>
+      <h3>Issues</h3>
+      <ul id="issues"></ul>
+    </aside>
+  </div>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

@@ -1,47 +1,111 @@
 # Gridfinity Bucket Designer
 
-Browser-based designer for Gridfinity-compatible drawer organizers, with separate
-**base footprint** (Gridfinity locking area) and **body footprint** (usable bucket
-shape) so bins can overflow the grid.
+Browser-based designer for Gridfinity-compatible drawer organizers, with
+separate **base footprint** (Gridfinity locking area) and **body footprint**
+(usable bucket shape). Body can overflow the base; the wall + stackable lip
+continue around the overflow region as if it were the same bucket.
+
+## Two builds
+
+| Build  | Where           | Render                                  |
+| ------ | --------------- | --------------------------------------- |
+| Server | `backend/` + `frontend/` | OpenSCAD CLI subprocess          |
+| Web    | `web/`          | openscad-wasm in the browser, no backend |
+
+The `web/` build is a feature-parity port that runs entirely client-side and
+deploys to GitHub Pages — see [`web/README.md`](web/README.md).
 
 ## Stack
 
-- **Backend** — `uv` + FastAPI + Pydantic + numpy-stl
+- **Backend** — `uv` + FastAPI + Pydantic + numpy-stl + OpenSCAD subprocess
 - **Frontend** — vanilla HTML / CSS / SVG / JS (no build step)
+- **CAD correctness baseline** — vendored
+  [kennetek/gridfinity-rebuilt-openscad](https://github.com/kennetek/gridfinity-rebuilt-openscad)
+  (MIT)
 
-## Run
+## Setup
 
 ```bash
+# 1. Install OpenSCAD (any 2021+ build works; snapshot recommended on Apple Silicon)
+brew install --cask openscad@snapshot
+# 2. Pull the SCAD library submodule
+git submodule update --init --recursive
+# 3. Python deps
 uv sync
+# 4. Run the server
 uv run uvicorn backend.main:app --reload
 ```
 
 Open http://127.0.0.1:8000.
 
+> If OpenSCAD is not installed the server still runs — exports fall back to a
+> hand-rolled triangle generator with approximate geometry. Install OpenSCAD
+> for spec-correct output.
+
+## Render paths
+
+`backend/cad.py` selects one of three paths per bucket:
+
+| Path     | When                                    | Renderer                                                    |
+| -------- | --------------------------------------- | ----------------------------------------------------------- |
+| Standard | `body_mm` matches `base_cells × cell`   | `backend/scad/standard.scad` (kennetek `bin_render`)         |
+| Overflow | Body extends beyond base footprint      | `backend/scad/overflow.scad` (kennetek `gridfinityBase` + `render_wall`) |
+| Fallback | OpenSCAD missing                        | `backend/legacy_cad.py` (hand-rolled triangles)              |
+
+For overflow buckets, `gridfinityBase` places the spec-correct foot per base
+cell, and `render_wall` sweeps the spec stacking lip around the body
+rectangle. The wall is the same kennetek profile in the overflow region as
+in the base region — it just terminates against the floor where there is no
+foot below.
+
+## Tests
+
+```bash
+uv run pytest
+```
+
+29 tests cover validation, naive split logic, model round-trip, FastAPI
+surface, legacy fallback, and OpenSCAD-rendered geometry (winding-consistent
+mesh, expected bounding box, magnet-hole / lip toggle effects).
+
+OpenSCAD-dependent tests skip cleanly when the binary is unavailable.
+
 ## Layout
 
 ```
 backend/
-  main.py       FastAPI app + endpoints
-  models.py     Pydantic project/bucket schema
-  validate.py   Collision + bounds checks
-  cad.py        STL generation (rectangular hollow shell + Gridfinity feet)
+  cad.py            Render dispatcher (selects path)
+  cad_openscad.py   (folded into cad.py)
+  legacy_cad.py     Hand-rolled triangle generator (fallback)
+  main.py           FastAPI app + naive split logic
+  models.py         Pydantic schema
+  openscad.py       Subprocess wrapper around `openscad` CLI
+  scad/
+    standard.scad   Wraps kennetek bin_render with body-local origin
+    overflow.scad   Composes kennetek primitives for overflow buckets
+  validate.py       Bounds + collision + printer-bed checks
 frontend/
-  index.html    Toolbar / tools / canvas / properties panel
-  app.js        SVG editor, state, undo/redo, export wiring
+  index.html        Toolbar / tools / canvas / properties panel
+  app.js            SVG editor, state, undo/redo, export wiring
   style.css
+tests/              Pytest suite (skips OpenSCAD tests if not installed)
+vendor/
+  gridfinity-rebuilt-openscad/   Submodule (MIT) — geometric source of truth
 ```
 
-## Tools
+## Bucket properties (forwarded to the renderer)
 
-| Tool        | Behavior                                                      |
-| ----------- | ------------------------------------------------------------- |
-| Select      | Click a bucket to select; drag to move (snaps to grid cells). SE handle resizes the **base** in cells. |
-| Draw Base   | Click-drag on empty canvas to draw a Gridfinity base footprint. New bucket gets `body_mm` matching base. |
-| Edit Body   | When a bucket is selected, the SE handle resizes the **body** in mm independently of the base. |
-| Delete      | Click a bucket to remove. (Or select + Backspace.)            |
-
-Body offset / overflow can also be edited numerically in the right panel.
+| Field                 | Effect                                                |
+| --------------------- | ----------------------------------------------------- |
+| `height_mm`           | Total external height in mm (includes stackable lip)  |
+| `include_lip`         | Toggle the stackable top lip                          |
+| `magnet_holes`        | 6 × 2 mm magnet pockets in each base foot             |
+| `screw_holes`         | M3 screw holes in each base foot                      |
+| `only_corners_holes`  | Place magnet/screw holes at corners only              |
+| `scoop` (0–1)         | Scoop ramp inside the compartment (standard path)     |
+| `style_tab` (0–5)     | Label tab style: 0=Full 1=Auto 2=L 3=C 4=R 5=None     |
+| `wall_thickness_mm`   | Outer wall thickness (overflow path only)             |
+| `floor_thickness_mm`  | Floor thickness above foot (overflow path only)       |
 
 ## API
 
@@ -51,17 +115,8 @@ Body offset / overflow can also be edited numerically in the right panel.
 | POST   | `/api/export/stl`    | STL for selected bucket(s); zip if multiple |
 | POST   | `/api/export/bundle` | Zip of `project.json` + all STLs            |
 
-## MVP scope (per spec §9.1)
+## License notes
 
-Implemented: drawer dimensions, grid overlay, rectangular bucket draw, base/body
-separation, body overflow, height/wall, JSON I/O, STL export, collision +
-printer-bed validation, undo/redo.
-
-Not yet: rounded corners in CAD output, label scoops, dividers, automatic
-oversized-bucket splitting with connectors, polygon bodies, 3D preview.
-
-The CAD output uses a simplified two-step Gridfinity foot profile (top 41.5 mm,
-mid step at 37.2 mm, bottom 35.6 mm). The exact 0.8 / 1.8 / 2.15 mm chamfered
-profile and rounded corners are TODO — currently the foot is stepped, not
-chamfered, so it will not lock perfectly into a real Gridfinity baseplate
-without slight tuning.
+The SCAD library under `vendor/gridfinity-rebuilt-openscad/` is MIT-licensed
+by Kenneth Hodson; original Gridfinity dimensions by Zack Freedman /
+Voidstar Lab LLC.

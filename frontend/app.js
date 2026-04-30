@@ -18,8 +18,8 @@ function defaultProject() {
     grid: { cell_mm: 42, clearance_mm: 0.25, origin_x_mm: 0, origin_y_mm: 0 },
     printer: { bed_x_mm: 256, bed_y_mm: 256, bed_z_mm: 256 },
     defaults: {
-      wall_thickness_mm: 1.6, floor_thickness_mm: 1.2,
-      corner_radius_mm: 3, bucket_height_mm: 60,
+      wall_thickness_mm: 0.95, floor_thickness_mm: 0.7,
+      corner_radius_mm: 3.75, bucket_height_mm: 42,
     },
     buckets: [],
   };
@@ -452,6 +452,12 @@ window.addEventListener("mouseup", () => {
       dividers: [],
       connectors: { enabled: false, type: "none" },
       split: { enabled: false, strategy: "auto", parts: [] },
+      include_lip: true,
+      magnet_holes: false,
+      screw_holes: false,
+      only_corners_holes: false,
+      scoop: 0,
+      style_tab: 5,
     });
     selectBucket(id);
   }
@@ -514,6 +520,12 @@ function syncPropsPanel() {
   document.getElementById("propBodyW").value = b.body_mm.w;
   document.getElementById("propBodyD").value = b.body_mm.d;
   document.getElementById("propNaiveSplit").checked = !!b.split?.enabled && b.split?.strategy === "naive";
+  document.getElementById("propIncludeLip").checked = b.include_lip !== false;
+  document.getElementById("propMagnetHoles").checked = !!b.magnet_holes;
+  document.getElementById("propScrewHoles").checked = !!b.screw_holes;
+  document.getElementById("propOnlyCornersHoles").checked = !!b.only_corners_holes;
+  document.getElementById("propScoop").value = b.scoop ?? 0;
+  document.getElementById("propStyleTab").value = String(b.style_tab ?? 5);
 }
 
 function bindPropInput(id, fn) {
@@ -538,6 +550,22 @@ bindPropInput("propBodyX", (b, v) => (b.body_mm.x = +v));
 bindPropInput("propBodyY", (b, v) => (b.body_mm.y = +v));
 bindPropInput("propBodyW", (b, v) => (b.body_mm.w = +v));
 bindPropInput("propBodyD", (b, v) => (b.body_mm.d = +v));
+
+function bindCheckbox(id, fn) {
+  document.getElementById(id).addEventListener("change", (e) => {
+    const b = state.project.buckets.find((x) => x.id === state.selectedId);
+    if (!b) return;
+    snapshot();
+    fn(b, e.target.checked);
+    render();
+  });
+}
+bindCheckbox("propIncludeLip", (b, v) => (b.include_lip = v));
+bindCheckbox("propMagnetHoles", (b, v) => (b.magnet_holes = v));
+bindCheckbox("propScrewHoles", (b, v) => (b.screw_holes = v));
+bindCheckbox("propOnlyCornersHoles", (b, v) => (b.only_corners_holes = v));
+bindPropInput("propScoop", (b, v) => (b.scoop = Math.max(0, Math.min(1, +v))));
+bindPropInput("propStyleTab", (b, v) => (b.style_tab = +v));
 
 document.getElementById("propNaiveSplit").addEventListener("change", (e) => {
   const b = state.project.buckets.find((x) => x.id === state.selectedId);
@@ -644,6 +672,20 @@ document.getElementById("exportStl").addEventListener("click", async () => {
   const cd = res.headers.get("Content-Disposition") || "";
   const m = /filename="?([^";]+)"?/.exec(cd);
   triggerDownload(blob, m ? m[1] : "bucket.stl");
+});
+
+document.getElementById("exportBaseplate").addEventListener("click", async () => {
+  const params = new URLSearchParams({ split: "true", enable_magnet: "false", style_plate: "0", style_hole: "0" });
+  const res = await fetch(`/api/export/baseplate?${params}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(state.project),
+  });
+  if (!res.ok) { alert("Baseplate export failed: " + (await res.text())); return; }
+  const blob = await res.blob();
+  const cd = res.headers.get("Content-Disposition") || "";
+  const m = /filename="?([^";]+)"?/.exec(cd);
+  triggerDownload(blob, m ? m[1] : "baseplate.stl");
 });
 
 document.getElementById("exportBundle").addEventListener("click", async () => {

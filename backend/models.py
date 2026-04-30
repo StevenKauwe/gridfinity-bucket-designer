@@ -25,10 +25,13 @@ class PrinterSettings(BaseModel):
 
 
 class BucketDefaults(BaseModel):
-    wall_thickness_mm: float = 1.6
-    floor_thickness_mm: float = 1.2
-    corner_radius_mm: float = 3
-    bucket_height_mm: float = 60
+    # Canonical Gridfinity bin parameters (https://gridfinity.xyz/specification):
+    # 6u height = 42mm, kennetek d_wall = 0.95mm, floor ≈ 0.7mm, outer
+    # corner radius 3.75mm matches the 7.5mm cell corner.
+    wall_thickness_mm: float = 0.95
+    floor_thickness_mm: float = 0.7
+    corner_radius_mm: float = 3.75
+    bucket_height_mm: float = 42
 
 
 class RectCells(BaseModel):
@@ -73,14 +76,27 @@ class Bucket(BaseModel):
     name: str = ""
     base_cells: RectCells
     body_mm: RectMM
-    height_mm: float = 60
-    wall_thickness_mm: float = 1.6
-    floor_thickness_mm: float = 1.2
-    corner_radius_mm: float = 3
+    height_mm: float = 42
+    wall_thickness_mm: float = 0.95
+    floor_thickness_mm: float = 0.7
+    corner_radius_mm: float = 3.75
     label: LabelSettings | None = None
     dividers: list[dict] = Field(default_factory=list)
     connectors: ConnectorSettings = Field(default_factory=ConnectorSettings)
     split: SplitSettings = Field(default_factory=SplitSettings)
+    # Gridfinity-spec options forwarded to OpenSCAD renderer:
+    include_lip: bool = True
+    magnet_holes: bool = False
+    screw_holes: bool = False
+    only_corners_holes: bool = False
+    scoop: float = 0  # 0..1 (only used in standard path; ignored in overflow path)
+    style_tab: int = 5  # 0=Full,1=Auto,2=Left,3=Center,4=Right,5=None
+    # Internal — populated by the naive-split logic so renderer can build the
+    # *parent* (un-split) bucket once and clip with the part's bounding box,
+    # giving clean butt joints automatically.
+    parent_body_mm: RectMM | None = None
+    parent_base_cells: RectCells | None = None
+    cut_box_mm: list[float] | None = None  # [x0, y0, x1, y1] in body-local mm
 
 
 class Project(BaseModel):
