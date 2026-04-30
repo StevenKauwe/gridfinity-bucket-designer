@@ -600,10 +600,17 @@ document.getElementById("previewStl").addEventListener("click", async () => {
   const orig = btn.textContent;
   btn.textContent = "Rendering…"; btn.disabled = true;
   try {
+    // Preview should show the *whole* bucket — disable split just for this
+    // request so the backend returns a single STL instead of a multi-part
+    // ZIP that the STL loader can't parse.
+    const previewProject = JSON.parse(JSON.stringify(state.project));
+    const target = previewProject.buckets.find((x) => x.id === b.id);
+    if (target && target.split) target.split.enabled = false;
+
     const res = await fetch("/api/export/stl", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ project: state.project, bucket_ids: [b.id] }),
+      body: JSON.stringify({ project: previewProject, bucket_ids: [b.id] }),
     });
     if (!res.ok) throw new Error(await res.text());
     const stl = new Uint8Array(await res.arrayBuffer());
