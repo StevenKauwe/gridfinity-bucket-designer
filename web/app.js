@@ -13,7 +13,7 @@ const defaultProject = _defaultProject;
 
 const state = {
   project: defaultProject(),
-  tool: "select",
+  tool: "draw-base",
   snap: true,
   selectedId: null,
   scale: 1.5, // px per mm
