@@ -442,7 +442,7 @@ window.addEventListener("mouseup", () => {
       label: { enabled: false, text: "", style: "front-scoop" },
       dividers: [],
       connectors: { enabled: false, type: "none" },
-      split: { enabled: false, strategy: "auto", parts: [] },
+      split: { enabled: true, strategy: "naive", parts: [] },
       include_lip: true,
       magnet_holes: false,
       screw_holes: false,

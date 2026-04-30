@@ -39,20 +39,22 @@ describe("validateProject", () => {
     expect(codes).toContain("BODY_OVERLAP");
   });
 
-  it("printer-bed overflow is a warning", () => {
-    const p = makeProject(bucket("wide", 0, 0, 1, 1, { bodyW: 300, bodyD: 42 }));
-    const issues = validateProject(p);
+  it("printer-bed overflow with split disabled is a warning", () => {
+    const b = bucket("wide", 0, 0, 1, 1, { bodyW: 300, bodyD: 42 });
+    b.split.enabled = false;
+    const issues = validateProject(makeProject(b));
     expect(issues.map((i) => i.code)).toEqual(["EXCEEDS_PRINTER_BED"]);
     expect(issues[0].severity).toBe("warning");
   });
 
-  it("naive split suppresses xy bed warning", () => {
+  it("naive split default warns that split will happen", () => {
+    // defaultBucket() ships split.enabled=true so new buckets auto-split.
     const b = bucket("wide", 0, 0, 1, 1, { bodyW: 300, bodyD: 42 });
-    b.split.enabled = true;
-    b.split.strategy = "naive";
+    expect(b.split.enabled).toBe(true);
+    expect(b.split.strategy).toBe("naive");
     const issues = validateProject(makeProject(b));
     expect(issues.map((i) => i.code)).toEqual(["NAIVE_SPLIT_ENABLED"]);
-    expect(issues[0].severity).toBe("info");
+    expect(issues[0].severity).toBe("warning");
   });
 
   it("base outside drawer is an error", () => {

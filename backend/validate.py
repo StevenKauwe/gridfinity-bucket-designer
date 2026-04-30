@@ -41,13 +41,13 @@ def validate_project(project: Project) -> list[Issue]:
         exceeds_xy = b.body_mm.w > project.printer.bed_x_mm or b.body_mm.d > project.printer.bed_y_mm
         exceeds_z = b.height_mm > project.printer.bed_z_mm
         if exceeds_xy and b.split.enabled and b.split.strategy == "naive":
-            issues.append(Issue(severity="info", bucket_id=b.id,
+            issues.append(Issue(severity="warning", bucket_id=b.id,
                                 code="NAIVE_SPLIT_ENABLED",
-                                message="Bucket will export as multiple naive split STLs."))
+                                message="Bucket exceeds printer bed; will export as multiple naive split parts. Uncheck “Naive split” to disable."))
         elif exceeds_xy or exceeds_z:
             issues.append(Issue(severity="warning", bucket_id=b.id,
                                 code="EXCEEDS_PRINTER_BED",
-                                message="Bucket exceeds printer bed; needs split."))
+                                message="Bucket exceeds printer bed and split is disabled — export will fail."))
 
         if exceeds_z and b.split.enabled:
             issues.append(Issue(severity="warning", bucket_id=b.id,

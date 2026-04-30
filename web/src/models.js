@@ -43,7 +43,10 @@ export function defaultBucket(id, base_cells, body_mm, defaults) {
     label: { enabled: false, text: "", style: "front-scoop" },
     dividers: [],
     connectors: { enabled: false, type: "none" },
-    split: { enabled: false, strategy: "auto", parts: [] },
+    // Naive split is on by default — only kicks in when the bucket's body
+    // exceeds the printer bed. The validator warns whenever the split will
+    // fire so it's never silent.
+    split: { enabled: true, strategy: "naive", parts: [] },
     include_lip: true,
     magnet_holes: false,
     screw_holes: false,

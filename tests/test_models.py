@@ -12,11 +12,13 @@ def test_bucket_defaults_match_spec_defaults() -> None:
         base_cells=RectCells(x=0, y=0, w=1, d=1),
         body_mm=RectMM(x=0, y=0, w=42, d=42),
     )
-    assert b.height_mm == 60
+    assert b.height_mm == 42
     assert b.include_lip is True
     assert b.magnet_holes is False
     assert b.screw_holes is False
-    assert b.split.enabled is False
+    # Naive split is on by default — only fires when bucket exceeds bed.
+    assert b.split.enabled is True
+    assert b.split.strategy == "naive"
 
 
 def test_project_round_trip_through_json() -> None:

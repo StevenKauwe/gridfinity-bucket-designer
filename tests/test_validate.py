@@ -22,20 +22,21 @@ def test_overlapping_bases_and_bodies_are_errors() -> None:
     assert all(i.severity == "error" for i in issues)
 
 
-def test_printer_bed_overflow_is_warning() -> None:
-    project = make_project(make_bucket("wide", body_w=300, body_d=42))
-    issues = validate_project(project)
+def test_printer_bed_overflow_with_split_disabled_is_warning() -> None:
+    bucket = make_bucket("wide", body_w=300, body_d=42)
+    bucket.split.enabled = False
+    issues = validate_project(make_project(bucket))
     assert [i.code for i in issues] == ["EXCEEDS_PRINTER_BED"]
     assert issues[0].severity == "warning"
 
 
-def test_naive_split_suppresses_xy_bed_warning() -> None:
+def test_naive_split_default_warns_that_split_will_happen() -> None:
     bucket = make_bucket("wide", body_w=300, body_d=42)
-    bucket.split.enabled = True
-    bucket.split.strategy = "naive"
+    # split.enabled defaults to True; new buckets auto-split when too big.
+    assert bucket.split.enabled is True
     issues = validate_project(make_project(bucket))
     assert [i.code for i in issues] == ["NAIVE_SPLIT_ENABLED"]
-    assert issues[0].severity == "info"
+    assert issues[0].severity == "warning"
 
 
 def test_base_outside_drawer_is_error() -> None:

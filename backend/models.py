@@ -66,8 +66,10 @@ class SplitPart(BaseModel):
 
 
 class SplitSettings(BaseModel):
-    enabled: bool = False
-    strategy: Literal["auto", "manual", "naive"] = "auto"
+    # Naive split is on by default — only fires when the bucket's body
+    # exceeds the printer bed. Validator warns whenever a split will happen.
+    enabled: bool = True
+    strategy: Literal["auto", "manual", "naive"] = "naive"
     parts: list[SplitPart] = Field(default_factory=list)
 
 

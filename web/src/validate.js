@@ -46,15 +46,15 @@ export function validateProject(project) {
     const naive = b.split && b.split.enabled && b.split.strategy === "naive";
     if (exceedsXy && naive) {
       issues.push({
-        severity: "info", bucket_id: b.id,
+        severity: "warning", bucket_id: b.id,
         code: "NAIVE_SPLIT_ENABLED",
-        message: "Bucket will export as multiple naive split STLs.",
+        message: "Bucket exceeds printer bed; will export as multiple naive split parts. Uncheck “Naive split” to disable.",
       });
     } else if (exceedsXy || exceedsZ) {
       issues.push({
         severity: "warning", bucket_id: b.id,
         code: "EXCEEDS_PRINTER_BED",
-        message: "Bucket exceeds printer bed; needs split.",
+        message: "Bucket exceeds printer bed and split is disabled — export will fail.",
       });
     }
     if (exceedsZ && b.split && b.split.enabled) {
