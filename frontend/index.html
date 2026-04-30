@@ -4,6 +4,14 @@
   <meta charset="UTF-8" />
   <title>Gridfinity Bucket Designer</title>
   <link rel="stylesheet" href="/static/style.css" />
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.169/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169/examples/jsm/"
+    }
+  }
+  </script>
 </head>
 <body>
   <div id="app">
@@ -121,6 +129,7 @@
           <label class="checkbox"><input id="propNaiveSplit" type="checkbox" /> Naive split oversized export</label>
         </fieldset>
 
+        <button id="previewStl" class="primary">Preview 3D</button>
         <button id="resetBody">Reset body to base</button>
         <button id="setGridfinityDefaults">Reset to Gridfinity defaults</button>
       </div>

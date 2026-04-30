@@ -1,4 +1,6 @@
 // Gridfinity Bucket Designer — vanilla JS frontend.
+import { openPreview } from "./preview.js";
+
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 const state = {
@@ -590,6 +592,29 @@ const GRIDFINITY_DEFAULTS = {
   floor_thickness_mm: 0.7,
   corner_radius_mm: 3.75,
 };
+
+document.getElementById("previewStl").addEventListener("click", async () => {
+  const b = state.project.buckets.find((x) => x.id === state.selectedId);
+  if (!b) { alert("Select a bucket to preview."); return; }
+  const btn = document.getElementById("previewStl");
+  const orig = btn.textContent;
+  btn.textContent = "Rendering…"; btn.disabled = true;
+  try {
+    const res = await fetch("/api/export/stl", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ project: state.project, bucket_ids: [b.id] }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const stl = new Uint8Array(await res.arrayBuffer());
+    openPreview(stl, b.name || b.id);
+  } catch (err) {
+    console.error(err);
+    alert("Preview failed: " + err.message);
+  } finally {
+    btn.textContent = orig; btn.disabled = false;
+  }
+});
 
 document.getElementById("setGridfinityDefaults").addEventListener("click", () => {
   const b = state.project.buckets.find((x) => x.id === state.selectedId);
