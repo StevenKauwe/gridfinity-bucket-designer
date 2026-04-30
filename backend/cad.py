@@ -57,6 +57,24 @@ def _render_geometry(bucket: Bucket, project: Project) -> dict:
     base_offset_x = base.x * cell - body.x
     base_offset_y = base.y * cell - body.y
 
+    base_x0 = base.x * cell
+    base_y0 = base.y * cell
+    base_x1 = (base.x + base.w) * cell
+    base_y1 = (base.y + base.d) * cell
+    body_x0 = body.x
+    body_y0 = body.y
+    body_x1 = body.x + body.w
+    body_y1 = body.y + body.d
+
+    foot_x0 = math.floor(min(base_x0, body_x0) / cell) * cell
+    foot_y0 = math.floor(min(base_y0, body_y0) / cell) * cell
+    foot_x1 = math.ceil(max(base_x1, body_x1) / cell) * cell
+    foot_y1 = math.ceil(max(base_y1, body_y1) / cell) * cell
+    foot_grid_w = max(1, round((foot_x1 - foot_x0) / cell))
+    foot_grid_d = max(1, round((foot_y1 - foot_y0) / cell))
+    foot_offset_x = foot_x0 - body.x
+    foot_offset_y = foot_y0 - body.y
+
     seam = {"x0": False, "x1": False, "y0": False, "y1": False}
     parent = bucket.parent_body_mm
     if parent is not None:
@@ -74,6 +92,10 @@ def _render_geometry(bucket: Bucket, project: Project) -> dict:
         "base_grid_d": int(base.d),
         "base_offset_x": float(base_offset_x),
         "base_offset_y": float(base_offset_y),
+        "foot_grid_w": int(foot_grid_w),
+        "foot_grid_d": int(foot_grid_d),
+        "foot_offset_x": float(foot_offset_x),
+        "foot_offset_y": float(foot_offset_y),
         "cell_mm": float(cell),
         "scoop": float(bucket.scoop),
         "include_lip": bool(bucket.include_lip),

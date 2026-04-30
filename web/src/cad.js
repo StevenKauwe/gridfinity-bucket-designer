@@ -1,14 +1,12 @@
 // JS port of backend/cad.py — render dispatcher.
-// Routes every bucket to the standard kennetek bin sized to the smallest
-// cell-aligned bounding grid that contains body ∪ base, with a cut box
-// trimming back to the body extent. Overflow + split + standard all flow
-// through one path.
+// Routes every bucket through the fractional-bin SCAD path: body/lip/cavity
+// render at the exact body footprint, while the Gridfinity foot grid is placed
+// at the user's base-cell location inside that footprint.
 
 import { renderStl } from "./openscad.js";
 
 const STANDARD_SCAD = "scad/standard.scad";
 const BASEPLATE_SCAD = "scad/baseplate.scad";
-const GRIDZ_DEFINE_EXTERNAL_MM = 3;
 
 // ── Render cache ───────────────────────────────────────────────────────────
 // openscad-wasm CGAL is slow (5–15 s for a typical bin). Three lookup tiers
@@ -119,20 +117,10 @@ export function clearRenderCache() {
 // Exported for the precompute script: same key the browser will look up.
 export { cacheKey };
 
-function effectiveGeometry(bucket) {
-  if (bucket.cut_box_mm && bucket.parent_body_mm) {
-    return {
-      body: bucket.parent_body_mm,
-      base: bucket.parent_base_cells || bucket.base_cells,
-      cutBox: bucket.cut_box_mm,
-    };
-  }
-  return { body: bucket.body_mm, base: bucket.base_cells, cutBox: null };
-}
-
-export function boundingGridAndCut(bucket, project) {
+export function renderGeometry(bucket, project) {
   const cell = project.grid.cell_mm;
-  const { body, base, cutBox } = effectiveGeometry(bucket);
+  const body = bucket.body_mm;
+  const base = bucket.base_cells;
 
   const baseX0 = base.x * cell;
   const baseY0 = base.y * cell;
@@ -143,75 +131,51 @@ export function boundingGridAndCut(bucket, project) {
   const bodyX1 = body.x + body.w;
   const bodyY1 = body.y + body.d;
 
-  const unionX0 = Math.min(baseX0, bodyX0);
-  const unionY0 = Math.min(baseY0, bodyY0);
-  const unionX1 = Math.max(baseX1, bodyX1);
-  const unionY1 = Math.max(baseY1, bodyY1);
+  const footX0 = Math.floor(Math.min(baseX0, bodyX0) / cell) * cell;
+  const footY0 = Math.floor(Math.min(baseY0, bodyY0) / cell) * cell;
+  const footX1 = Math.ceil(Math.max(baseX1, bodyX1) / cell) * cell;
+  const footY1 = Math.ceil(Math.max(baseY1, bodyY1) / cell) * cell;
+  const footGridW = Math.max(1, Math.round((footX1 - footX0) / cell));
+  const footGridD = Math.max(1, Math.round((footY1 - footY0) / cell));
 
-  const bgx0 = Math.floor(unionX0 / cell) * cell;
-  const bgy0 = Math.floor(unionY0 / cell) * cell;
-  const bgx1 = Math.ceil(unionX1 / cell) * cell;
-  const bgy1 = Math.ceil(unionY1 / cell) * cell;
-  const gridW = Math.round((bgx1 - bgx0) / cell);
-  const gridD = Math.round((bgy1 - bgy0) / cell);
-
-  // Body extent in bounding-grid-local coords.
-  const bodyBg = [bodyX0 - bgx0, bodyY0 - bgy0, bodyX1 - bgx0, bodyY1 - bgy0];
-  let cut;
-  if (!cutBox) {
-    cut = bodyBg.slice();
-  } else {
-    cut = [
-      bodyX0 + cutBox[0] - bgx0,
-      bodyY0 + cutBox[1] - bgy0,
-      bodyX0 + cutBox[2] - bgx0,
-      bodyY0 + cutBox[3] - bgy0,
-    ];
+  const seam = { x0: false, x1: false, y0: false, y1: false };
+  const parent = bucket.parent_body_mm;
+  if (parent) {
+    const eps = 1e-3;
+    seam.x0 = Math.abs(body.x - parent.x) > eps;
+    seam.x1 = Math.abs((body.x + body.w) - (parent.x + parent.w)) > eps;
+    seam.y0 = Math.abs(body.y - parent.y) > eps;
+    seam.y1 = Math.abs((body.y + body.d) - (parent.y + parent.d)) > eps;
   }
-  // Seal a cut face only when it coincides with the body's outer edge —
-  // i.e. it's the bucket boundary (overhang). Inter-part seams stay open
-  // so adjacent split parts share one continuous interior.
-  const eps = 1e-3;
-  const seal = {
-    x0: Math.abs(cut[0] - bodyBg[0]) < eps,
-    y0: Math.abs(cut[1] - bodyBg[1]) < eps,
-    x1: Math.abs(cut[2] - bodyBg[2]) < eps,
-    y1: Math.abs(cut[3] - bodyBg[3]) < eps,
-  };
-  return { gridW, gridD, cut, seal };
-}
 
-function standardParams(bucket, project, gridW, gridD, cut, seal) {
   return {
-    gridx: gridW,
-    gridy: gridD,
-    gridz: bucket.height_mm,
-    gridz_define: GRIDZ_DEFINE_EXTERNAL_MM,
-    enable_zsnap: false,
-    include_lip: bucket.include_lip,
-    magnet_holes: bucket.magnet_holes,
-    screw_holes: bucket.screw_holes,
-    only_corners: bucket.only_corners_holes,
+    body_w: Number(body.w),
+    body_d: Number(body.d),
+    body_h: Number(bucket.height_mm),
+    base_grid_w: Number(base.w),
+    base_grid_d: Number(base.d),
+    base_offset_x: Number(base.x * cell - body.x),
+    base_offset_y: Number(base.y * cell - body.y),
+    foot_grid_w: footGridW,
+    foot_grid_d: footGridD,
+    foot_offset_x: Number(footX0 - body.x),
+    foot_offset_y: Number(footY0 - body.y),
+    cell_mm: Number(cell),
     scoop: Number(bucket.scoop || 0),
-    style_tab: Number(bucket.style_tab ?? 5),
-    divx: 1,
-    divy: 1,
+    include_lip: bucket.include_lip !== false,
+    magnet_holes: !!bucket.magnet_holes,
+    screw_holes: !!bucket.screw_holes,
+    only_corners: !!bucket.only_corners_holes,
     refined_holes: false,
-    cell_mm: project.grid.cell_mm,
-    cut_x0: cut[0],
-    cut_y0: cut[1],
-    cut_x1: cut[2],
-    cut_y1: cut[3],
-    seal_x0: !!seal.x0,
-    seal_y0: !!seal.y0,
-    seal_x1: !!seal.x1,
-    seal_y1: !!seal.y1,
+    seam_x0: seam.x0,
+    seam_x1: seam.x1,
+    seam_y0: seam.y0,
+    seam_y1: seam.y1,
   };
 }
 
 export async function generateBucketStl(bucket, project) {
-  const { gridW, gridD, cut, seal } = boundingGridAndCut(bucket, project);
-  return cachedRender(STANDARD_SCAD, standardParams(bucket, project, gridW, gridD, cut, seal));
+  return cachedRender(STANDARD_SCAD, renderGeometry(bucket, project));
 }
 
 export async function generateBaseplateStl(

@@ -9,7 +9,7 @@ for any config in this manifest.
 Run with the repo's Python env (`uv run python web/scripts/precompute.py`)
 once the kennetek submodule is present and OpenSCAD is installed.
 
-The set of (gridx, gridy, gridz, magnet_holes) combos can be extended below
+The set of (base/body size, height, magnet_holes) combos can be extended below
 without touching the dispatcher; the JS side just looks up by hash.
 """
 from __future__ import annotations
@@ -24,7 +24,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 
-from backend.cad import _bounding_grid_and_cut, _standard_params  # type: ignore
+from backend.cad import _render_geometry  # type: ignore
 from backend.models import Bucket, Drawer, Project, RectCells, RectMM  # type: ignore
 from backend.openscad import find_openscad, render_stl  # type: ignore
 
@@ -94,8 +94,7 @@ def precompute_buckets() -> int:
             height_mm=h,
             magnet_holes=magnet,
         )
-        grid_w, grid_d, cut = _bounding_grid_and_cut(bucket, project)
-        params = _standard_params(bucket, project, grid_w, grid_d, cut)
+        params = _render_geometry(bucket, project)
         # JS uses scadPath = "scad/standard.scad" (relative to the site root).
         wrote, out = write_cache("scad/standard.scad", params, STANDARD_SCAD)
         tag = "wrote" if wrote else "cache"

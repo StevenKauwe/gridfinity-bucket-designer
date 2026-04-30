@@ -62,7 +62,7 @@ web/
     models.js           defaultProject + defaultBucket helpers
     validate.js         port of backend/validate.py
     split.js            port of naive split logic
-    cad.js              dispatcher — boundingGridAndCut, generateBucketStl
+    cad.js              dispatcher — renderGeometry, generateBucketStl
     openscad.js         openscad-wasm wrapper (mounts SCAD FS, runs callMain)
   scad/                 our SCAD wrappers (standard.scad, baseplate.scad, overflow.scad)
   vendor/

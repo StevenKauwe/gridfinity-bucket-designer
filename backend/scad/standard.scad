@@ -33,12 +33,17 @@ body_d = 42;
 body_h = 42;
 
 /* [Base] */
-// Foot pattern: how many Gridfinity cells, where to place them (mm offset
-// of the foot grid's bottom-left within the body's local origin).
+// User-selected base cells. These keep the export aligned to the layout grid.
 base_grid_w = 2;
 base_grid_d = 1;
 base_offset_x = 0;
 base_offset_y = 0;
+// Grid-aligned cover footprint used for the lower base. It may include partial
+// cells outside base_grid_* when the body extends fractionally past the base.
+foot_grid_w = 2;
+foot_grid_d = 1;
+foot_offset_x = 0;
+foot_offset_y = 0;
 cell_mm = 42;
 
 /* [Compartment] */
@@ -74,27 +79,39 @@ hole_options = bundle_hole_options(
     supportless = printable_hole_top
 );
 
-// Wall portion height (excluding the stacking lip — render_wall adds it on top).
-wall_h = max(0, body_h - (include_lip ? stacking_lip_height() : 0));
-// Infill height between foot top and wall top.
-infill_h = max(0, wall_h - BASE_HEIGHT);
+// `body_h` is the total external height. Kennetek's wall height excludes both
+// the base and the stacking lip because render_wall adds the lip itself.
+bin_h = max(BASE_HEIGHT, body_h - (include_lip ? stacking_lip_height() : 0));
+wall_h = max(0, bin_h - BASE_HEIGHT);
+// Match new_bin(): with a lip, keep the stacking-lip support area solid.
+infill_h = max(0, include_lip
+    ? bin_h - BASE_HEIGHT - STACKING_LIP_SUPPORT_HEIGHT
+    : bin_h - BASE_HEIGHT);
 
 module _foot() {
-    foot_total_w = base_grid_w * cell_mm;
-    foot_total_d = base_grid_d * cell_mm;
-    translate([base_offset_x + foot_total_w / 2,
-               base_offset_y + foot_total_d / 2, 0])
-        gridfinityBase(
-            grid_size = [base_grid_w, base_grid_d],
-            grid_dimensions = [cell_mm, cell_mm],
-            hole_options = hole_options,
-            only_corners = only_corners
-        );
+    foot_total_w = foot_grid_w * cell_mm;
+    foot_total_d = foot_grid_d * cell_mm;
+
+    intersection() {
+        translate([foot_offset_x + foot_total_w / 2,
+                   foot_offset_y + foot_total_d / 2, 0])
+            gridfinityBase(
+                grid_size = [foot_grid_w, foot_grid_d],
+                grid_dimensions = [cell_mm, cell_mm],
+                hole_options = hole_options,
+                only_corners = only_corners
+            );
+
+        translate([body_w / 2, body_d / 2, -TOLLERANCE])
+            linear_extrude(BASE_HEIGHT + 2 * TOLLERANCE)
+                rounded_square(
+                    [body_w - TOLLERANCE, body_d - TOLLERANCE],
+                    BASE_TOP_RADIUS, center=true);
+    }
 }
 
 module _infill() {
-    // Solid block from foot top to wall top — what the compartment cutter
-    // carves into.
+    // Same infill block kennetek's bin_render_infill() creates.
     if (infill_h > 0) {
         translate([body_w / 2, body_d / 2, BASE_HEIGHT])
         linear_extrude(infill_h)
@@ -105,25 +122,16 @@ module _infill() {
 }
 
 module _wall_ring() {
-    // Wall annulus from z=0 up to wall_h, plus the stacking lip on top
-    // when include_lip is enabled. Mirrors kennetek's render_wall but with
-    // the lip toggleable.
-    grid_size_mm = [body_w, body_d];
-    translate([body_w / 2, body_d / 2, 0])
-        linear_extrude(wall_h)
-            difference() {
-                rounded_square(grid_size_mm, BASE_TOP_RADIUS, center=true);
-                rounded_square(
-                    [grid_size_mm.x - 2 * d_wall, grid_size_mm.y - 2 * d_wall],
-                    BASE_TOP_RADIUS, center=true);
-            }
-    if (include_lip) {
-        translate([body_w / 2, body_d / 2, 0])
-            sweep_rounded([
-                grid_size_mm.x - 2 * BASE_TOP_RADIUS,
-                grid_size_mm.y - 2 * BASE_TOP_RADIUS,
-            ])
-                _profile_wall(wall_h);
+    translate([body_w / 2, body_d / 2, BASE_HEIGHT]) {
+        if (include_lip) {
+            render_wall([body_w, body_d, wall_h]);
+        } else {
+            linear_extrude(wall_h)
+                difference() {
+                    rounded_square([body_w, body_d], BASE_TOP_RADIUS, center=true);
+                    rounded_square([body_w, body_d] - 2 * [d_wall, d_wall], BASE_TOP_RADIUS, center=true);
+                }
+        }
     }
 }
 
@@ -133,7 +141,7 @@ module _compartment_cut() {
     cut_z = infill_h;
     if (cut_w > 0 && cut_d > 0 && cut_z > 0) {
         // compartment_cutter is anchored at z=top, extends downward by size_mm.z.
-        translate([body_w / 2, body_d / 2, BASE_HEIGHT + cut_z])
+        translate([body_w / 2, body_d / 2, BASE_HEIGHT + cut_z + TOLLERANCE])
             compartment_cutter([cut_w, cut_d, cut_z], scoop_percent=scoop, tab_width=0);
     }
 }
