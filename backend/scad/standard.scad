@@ -91,23 +91,42 @@ clip_y1 = (cut_y1 < 0) ? body_d : cut_y1;
 clip_w = clip_x1 - cut_x0;
 clip_d = clip_y1 - cut_y0;
 
-module full_bin() {
+// `cut_needed` controls whether we wrap the bin in render()+intersection().
+// CGAL booleans on a kennetek bin are expensive (~+100–500 ms per render),
+// so for the common no-cut case we emit bin_render's three top-level outputs
+// (wall, infill, foot) directly — no extra CSG.
+no_cut = (cut_x0 <= 0.001)
+      && (cut_y0 <= 0.001)
+      && (clip_x1 >= body_w - 0.001)
+      && (clip_y1 >= body_d - 0.001);
+
+module full_bin(wrap_render=true) {
     // bin_render emits multiple top-level objects (wall, infill, foot).
-    // Wrap in render() so they collapse into a single solid before being
-    // operated on by the outer intersection().
-    render()
-    translate([body_w / 2, body_d / 2, 0])
-    bin_render(bin1) {
-        bin_subdivide(bin1, [divx, divy]) {
-            if (cut_cylinders) {
-                cut_chamfered_cylinder(cd / 2, cgs(height=depth).z, c_chamfer);
-            } else {
-                cut_compartment_auto(
-                    cgs(height=depth),
-                    style_tab,
-                    place_tab != 0,
-                    scoop
-                );
+    // Wrap in render() ONLY when we actually intersect with the cut box,
+    // so the boolean operates on a single solid. For no-cut renders we
+    // skip render() entirely — bin_render's outputs union implicitly when
+    // emitted side by side.
+    if (wrap_render) {
+        render()
+        translate([body_w / 2, body_d / 2, 0])
+        bin_render(bin1) {
+            bin_subdivide(bin1, [divx, divy]) {
+                if (cut_cylinders) {
+                    cut_chamfered_cylinder(cd / 2, cgs(height=depth).z, c_chamfer);
+                } else {
+                    cut_compartment_auto(cgs(height=depth), style_tab, place_tab != 0, scoop);
+                }
+            }
+        }
+    } else {
+        translate([body_w / 2, body_d / 2, 0])
+        bin_render(bin1) {
+            bin_subdivide(bin1, [divx, divy]) {
+                if (cut_cylinders) {
+                    cut_chamfered_cylinder(cd / 2, cgs(height=depth).z, c_chamfer);
+                } else {
+                    cut_compartment_auto(cgs(height=depth), style_tab, place_tab != 0, scoop);
+                }
             }
         }
     }
@@ -154,12 +173,17 @@ module seal_slabs() {
             cube([slab_x_hi - slab_x_lo, seal_wall_thickness, slab_h]);
 }
 
-translate([-cut_x0, -cut_y0, 0])
-intersection() {
-    union() {
-        full_bin();
-        seal_slabs();
+if (no_cut) {
+    // Fast path: emit bin_render directly, no CGAL intersection.
+    full_bin(wrap_render=false);
+} else {
+    translate([-cut_x0, -cut_y0, 0])
+    intersection() {
+        union() {
+            full_bin();
+            seal_slabs();
+        }
+        translate([cut_x0, cut_y0, -1])
+            cube([clip_w, clip_d, slab_h + 100]);
     }
-    translate([cut_x0, cut_y0, -1])
-        cube([clip_w, clip_d, slab_h + 100]);
 }

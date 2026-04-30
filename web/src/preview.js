@@ -43,6 +43,9 @@ function ensureViewer(container) {
   scene.background = new THREE.Color(0xf1f5f9);
 
   const camera = new THREE.PerspectiveCamera(45, w / h, 0.1, 5000);
+  // STL output is Z-up (kennetek convention). Tell Three.js so OrbitControls
+  // rotates around the world Z axis and the bin sits "right side up".
+  camera.up.set(0, 0, 1);
   camera.position.set(120, 120, 120);
 
   const renderer = new THREE.WebGLRenderer({ antialias: true });
