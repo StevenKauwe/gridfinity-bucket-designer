@@ -1,5 +1,5 @@
 // Gridfinity Bucket Designer — vanilla JS frontend.
-import { openPreview } from "./preview.js";
+import { openPreview, openPreviewScene } from "./preview.js?v=preview-yflip";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -620,6 +620,45 @@ document.getElementById("previewStl").addEventListener("click", async () => {
     alert("Preview failed: " + err.message);
   } finally {
     btn.textContent = orig; btn.disabled = false;
+  }
+});
+
+document.getElementById("previewAll").addEventListener("click", async () => {
+  if (!state.project.buckets.length) { alert("No buckets to preview."); return; }
+  const btn = document.getElementById("previewAll");
+  const orig = btn.textContent;
+  btn.textContent = "Rendering...";
+  btn.disabled = true;
+  try {
+    const previewProject = JSON.parse(JSON.stringify(state.project));
+    for (const bucket of previewProject.buckets) {
+      if (bucket.split) bucket.split.enabled = false;
+    }
+
+    const items = [];
+    for (const bucket of state.project.buckets) {
+      const res = await fetch("/api/export/stl", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project: previewProject, bucket_ids: [bucket.id] }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      items.push({
+        bytes: new Uint8Array(await res.arrayBuffer()),
+        label: bucket.name || bucket.id,
+        x: bucket.body_mm.x,
+        y: -bucket.body_mm.y,
+        z: 0,
+        mirrorY: true,
+      });
+    }
+    openPreviewScene(items, "All buckets");
+  } catch (err) {
+    console.error(err);
+    alert("Preview all failed: " + err.message);
+  } finally {
+    btn.textContent = orig;
+    btn.disabled = false;
   }
 });
 

@@ -325,29 +325,79 @@ html, body { margin: 0; height: 100%; font-family: var(--font); color: var(--tex
 #issues li.info    { border-color: var(--info);   color: var(--info);   background: #f0f9ff; }
 
 /* SVG */
-.drawer-outline { fill: var(--canvas-paper); stroke: #1e293b; stroke-width: 1.5; pointer-events: none; }
+.drawer-walls {
+  fill: #d4a373;
+  stroke: #7c4a1f;
+  stroke-width: 1.5;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.18));
+  pointer-events: none;
+}
+.drawer-interior { fill: var(--canvas-paper); pointer-events: all; }
+.drawer-outline { fill: none; stroke: #1e293b; stroke-width: 1.5; pointer-events: none; }
 .grid-line { stroke: #cbd5e1; stroke-width: 0.4; pointer-events: none; }
 .outside-grid-line { stroke: #fb923c; stroke-width: 1; stroke-dasharray: 4 4; pointer-events: none; }
+.bucket-cell {
+  fill: rgba(59, 130, 246, 0.32);
+  stroke: var(--accent-strong);
+  stroke-width: 1.2;
+  cursor: pointer;
+  transition: fill 120ms;
+}
+.bucket-cell:hover { fill: rgba(59, 130, 246, 0.45); }
+.bucket-cell.selected {
+  fill: rgba(59, 130, 246, 0.5);
+  stroke-width: 1.8;
+}
 .bucket-body {
-  fill: rgba(59, 130, 246, 0.18);
+  fill: none;
   stroke: var(--accent-strong);
-  stroke-width: 1.5;
-  cursor: move;
-  transition: fill 120ms, stroke 120ms;
+  stroke-width: 1.4;
+  stroke-dasharray: 6 3;
+  pointer-events: none;
+  opacity: 0.7;
 }
-.bucket-body:hover { fill: rgba(59, 130, 246, 0.28); }
 .bucket-body.selected {
-  fill: rgba(59, 130, 246, 0.36);
-  stroke: var(--accent-strong);
-  stroke-width: 2.5;
-  filter: drop-shadow(0 1px 3px rgba(37, 99, 235, 0.3));
+  stroke-width: 2.2;
+  opacity: 1;
 }
-.bucket-base { fill: none; stroke: #475569; stroke-width: 1; stroke-dasharray: 5 3; pointer-events: none; }
 .bucket-invalid { stroke: var(--danger) !important; }
 .split-line { stroke: #a855f7; stroke-width: 1.2; stroke-dasharray: 3 3; pointer-events: none; }
-.handle { fill: var(--accent); stroke: #fff; stroke-width: 1.5; cursor: nwse-resize; }
-.handle:hover { fill: var(--accent-strong); }
-.draft { fill: rgba(59, 130, 246, 0.1); stroke: var(--accent-strong); stroke-width: 1.5; stroke-dasharray: 4 4; }
+.move-handle circle {
+  fill: #fff;
+  stroke: var(--accent-strong);
+  stroke-width: 1.6;
+  cursor: move;
+  transition: fill 120ms;
+}
+.move-handle:hover circle { fill: var(--accent-soft); }
+.move-handle.selected circle { fill: var(--accent); stroke: #fff; }
+.move-handle-cross { stroke: var(--accent-strong); stroke-width: 1.6; pointer-events: none; }
+.move-handle.selected .move-handle-cross { stroke: #fff; }
+.draft { fill: rgba(59, 130, 246, 0.12); stroke: var(--accent-strong); stroke-width: 1.5; stroke-dasharray: 4 4; pointer-events: none; }
+
+#hint {
+  position: absolute;
+  bottom: 14px;
+  left: 18px;
+  padding: 6px 12px;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--text-soft);
+  border-radius: 4px;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+  box-shadow: var(--shadow-sm);
+}
+
+#properties button.danger {
+  border-color: #fecaca;
+  color: var(--danger);
+}
+#properties button.danger:hover {
+  background: #fef2f2;
+  border-color: var(--danger);
+  color: var(--danger);
+}
 
 /* Status pill (bottom-right of canvas) */
 #status {

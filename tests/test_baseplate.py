@@ -10,7 +10,7 @@ import trimesh
 from fastapi.testclient import TestClient
 
 from backend.cad import generate_baseplate_stl
-from backend.main import app
+from backend.main import _balanced_baseplate_axis_cells, app
 
 from .conftest import make_project
 
@@ -38,8 +38,7 @@ def test_baseplate_renders_for_drawer_grid() -> None:
 
 @pytest.mark.usefixtures("openscad_required")
 def test_baseplate_endpoint_zips_split_parts(client) -> None:
-    """A 500 × 420 drawer with 256 mm bed splits along x; baseplate is 11 cells
-    wide (462 mm) but only 6 fit per build plate, so X axis splits into 6+5."""
+    """Split baseplate export emits large repeated tile shapes."""
     project = make_project()
     payload = json.loads(project.model_dump_json())
     res = client.post("/api/export/baseplate?split=true", json=payload)
@@ -47,8 +46,28 @@ def test_baseplate_endpoint_zips_split_parts(client) -> None:
     assert res.headers["content-type"] == "application/zip"
     with zipfile.ZipFile(io.BytesIO(res.content)) as zf:
         names = zf.namelist()
+        payloads = {zf.read(n) for n in names}
     assert len(names) >= 2
     assert all(n.startswith("baseplate-") for n in names)
+    assert len(payloads) <= 2
+
+
+def test_balanced_baseplate_axis_prefers_large_repeated_spans() -> None:
+    assert _balanced_baseplate_axis_cells(
+        total_cells=15,
+        bed_size=256,
+        cell=42,
+    ) == [5, 5, 5]
+    assert _balanced_baseplate_axis_cells(
+        total_cells=11,
+        bed_size=256,
+        cell=42,
+    ) == [6, 5]
+    assert _balanced_baseplate_axis_cells(
+        total_cells=10,
+        bed_size=256,
+        cell=42,
+    ) == [5, 5]
 
 
 @pytest.mark.usefixtures("openscad_required")

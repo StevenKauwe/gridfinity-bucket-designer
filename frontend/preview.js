@@ -79,7 +79,7 @@ function ensureViewer(container) {
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
 
-  let mesh = null;
+  let meshes = [];
   let raf = 0;
   function animate() {
     raf = requestAnimationFrame(animate);
@@ -100,33 +100,59 @@ function ensureViewer(container) {
   const ro = new ResizeObserver(resize);
   ro.observe(container);
 
-  function setMesh(stlBytes, meta) {
-    if (mesh) { scene.remove(mesh); mesh.geometry.dispose(); mesh.material.dispose(); }
+  function clearMeshes() {
+    for (const mesh of meshes) {
+      scene.remove(mesh);
+      mesh.geometry.dispose();
+      mesh.material.dispose();
+    }
+    meshes = [];
+  }
+
+  function setMeshes(items) {
+    clearMeshes();
     const loader = new STLLoader();
-    const buf = stlBytes.buffer.slice(stlBytes.byteOffset, stlBytes.byteOffset + stlBytes.byteLength);
-    const geom = loader.parse(buf);
-    geom.computeVertexNormals();
+    const colors = [0xf59e0b, 0x2563eb, 0x16a34a, 0xdc2626, 0x7c3aed, 0x0891b2, 0xea580c];
+    const worldBox = new THREE.Box3();
 
-    // STL is in millimeters; orient with Z up — same as kennetek output.
-    const material = new THREE.MeshStandardMaterial({
-      color: 0xf59e0b,
-      roughness: 0.5,
-      metalness: 0.05,
-      flatShading: false,
+    items.forEach((item, index) => {
+      const stlBytes = item.bytes || item.stlBytes;
+      const buf = stlBytes.buffer.slice(stlBytes.byteOffset, stlBytes.byteOffset + stlBytes.byteLength);
+      const geom = loader.parse(buf);
+      geom.computeVertexNormals();
+
+      const material = new THREE.MeshStandardMaterial({
+        color: item.color || colors[index % colors.length],
+        roughness: 0.5,
+        metalness: 0.05,
+        flatShading: false,
+      });
+      const mesh = new THREE.Mesh(geom, material);
+      mesh.castShadow = true;
+      mesh.position.set(item.x || 0, item.y || 0, item.z || 0);
+      if (item.mirrorY) {
+        mesh.scale.y = -1;
+      }
+      scene.add(mesh);
+      meshes.push(mesh);
+
+      geom.computeBoundingBox();
+      mesh.updateMatrixWorld(true);
+      const box = geom.boundingBox.clone().applyMatrix4(mesh.matrixWorld);
+      worldBox.union(box);
     });
-    mesh = new THREE.Mesh(geom, material);
-    mesh.castShadow = true;
-    scene.add(mesh);
 
-    // Frame the mesh.
-    geom.computeBoundingBox();
-    const bb = geom.boundingBox;
+    if (worldBox.isEmpty()) return;
+
     const center = new THREE.Vector3();
-    bb.getCenter(center);
-    mesh.position.sub(center);
-    mesh.position.z += (bb.max.z - bb.min.z) / 2; // sit on the grid
+    worldBox.getCenter(center);
+    for (const mesh of meshes) {
+      mesh.position.x -= center.x;
+      mesh.position.y -= center.y;
+      mesh.position.z -= worldBox.min.z;
+    }
 
-    const size = bb.getSize(new THREE.Vector3());
+    const size = worldBox.getSize(new THREE.Vector3());
     const max = Math.max(size.x, size.y, size.z) || 50;
     camera.position.set(max * 1.4, -max * 1.4, max * 0.9);
     controls.target.set(0, 0, max / 4);
@@ -137,13 +163,39 @@ function ensureViewer(container) {
   function dispose() {
     cancelAnimationFrame(raf);
     ro.disconnect();
-    if (mesh) { scene.remove(mesh); mesh.geometry.dispose(); mesh.material.dispose(); }
+    clearMeshes();
     renderer.dispose();
     container.innerHTML = "";
   }
 
-  viewer = { container, setMesh, dispose };
+  viewer = { container, setMeshes, dispose };
   return viewer;
+}
+
+function stlStats(items) {
+  let triangles = 0;
+  let bytes = 0;
+  for (const item of items) {
+    const stlBytes = item.bytes || item.stlBytes;
+    const dv = new DataView(stlBytes.buffer, stlBytes.byteOffset, stlBytes.byteLength);
+    triangles += dv.getUint32(80, true);
+    bytes += stlBytes.length;
+  }
+  return { triangles, bytes };
+}
+
+export function openPreviewScene(items, label) {
+  const overlay = ensureOverlay();
+  overlay.classList.add("open");
+  const canvas = overlay.querySelector(".preview-canvas");
+  const v = ensureViewer(canvas);
+  v.setMeshes(items);
+
+  const meta = overlay.querySelector(".preview-meta");
+  if (meta) {
+    const { triangles, bytes } = stlStats(items);
+    meta.textContent = `${label || ""} · ${items.length.toLocaleString()} boxes · ${triangles.toLocaleString()} triangles · ${(bytes / 1024).toFixed(1)} KB`;
+  }
 }
 
 export function openPreview(stlBytes, label) {
@@ -151,7 +203,7 @@ export function openPreview(stlBytes, label) {
   overlay.classList.add("open");
   const canvas = overlay.querySelector(".preview-canvas");
   const v = ensureViewer(canvas);
-  v.setMesh(stlBytes, { label });
+  v.setMeshes([{ bytes: stlBytes, label, x: 0, y: 0, z: 0 }]);
 
   const meta = overlay.querySelector(".preview-meta");
   if (meta) {

@@ -57,6 +57,15 @@ export function validateProject(project) {
         message: "Bucket exceeds printer bed and split is disabled — export will fail.",
       });
     }
+    const drawerH = project.drawer.height_mm;
+    if (drawerH && b.height_mm > drawerH) {
+      issues.push({
+        severity: "warning", bucket_id: b.id,
+        code: "BUCKET_TOO_TALL_FOR_DRAWER",
+        message: `Bucket height ${b.height_mm}mm exceeds drawer interior height ${drawerH}mm — bin won't fit.`,
+      });
+    }
+
     if (exceedsZ && b.split && b.split.enabled) {
       issues.push({
         severity: "warning", bucket_id: b.id,

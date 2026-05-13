@@ -51,8 +51,8 @@ def _render_geometry(bucket: Bucket, project: Project) -> dict:
     pieces share a continuous interior cavity.
     """
     cell = project.grid.cell_mm
-    body = bucket.body_mm
-    base = bucket.base_cells
+    body = bucket.parent_body_mm or bucket.body_mm
+    base = bucket.parent_base_cells or bucket.base_cells
 
     base_offset_x = base.x * cell - body.x
     base_offset_y = base.y * cell - body.y
@@ -84,6 +84,15 @@ def _render_geometry(bucket: Bucket, project: Project) -> dict:
         seam["y0"] = abs(body.y - parent.y) > eps
         seam["y1"] = abs((body.y + body.d) - (parent.y + parent.d)) > eps
 
+    cut_box = bucket.cut_box_mm
+    if bucket.parent_body_mm is not None and cut_box is None:
+        cut_box = [
+            bucket.body_mm.x - body.x,
+            bucket.body_mm.y - body.y,
+            bucket.body_mm.x + bucket.body_mm.w - body.x,
+            bucket.body_mm.y + bucket.body_mm.d - body.y,
+        ]
+
     return {
         "body_w": float(body.w),
         "body_d": float(body.d),
@@ -107,6 +116,11 @@ def _render_geometry(bucket: Bucket, project: Project) -> dict:
         "seam_x1": bool(seam["x1"]),
         "seam_y0": bool(seam["y0"]),
         "seam_y1": bool(seam["y1"]),
+        "clip_enabled": cut_box is not None,
+        "clip_x0": float(cut_box[0]) if cut_box else 0.0,
+        "clip_y0": float(cut_box[1]) if cut_box else 0.0,
+        "clip_x1": float(cut_box[2]) if cut_box else float(body.w),
+        "clip_y1": float(cut_box[3]) if cut_box else float(body.d),
     }
 
 

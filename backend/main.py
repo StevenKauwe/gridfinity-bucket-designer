@@ -206,16 +206,40 @@ def api_export_stl(req: ExportRequest):
     )
 
 
-def _baseplate_split_ranges(total_cells: int, bed_size: float, cell: float) -> list[tuple[int, int]]:
-    """Return [(start_cell, count), ...] spans whose width fits the bed."""
+def _balanced_baseplate_axis_cells(total_cells: int, bed_size: float, cell: float) -> list[int]:
+    """Split one axis into large, repeatable spans that fit the bed.
+
+    Prefer the minimum number of spans first, then the fewest unique span
+    lengths, then larger minimum span length. This keeps baseplates stiff
+    without making every tile position-specific.
+    """
     max_cells = max(1, math.floor(bed_size / cell))
-    ranges: list[tuple[int, int]] = []
-    cursor = 0
-    while cursor < total_cells:
-        count = min(max_cells, total_cells - cursor)
-        ranges.append((cursor, count))
-        cursor += count
-    return ranges
+    span_count = math.ceil(total_cells / max_cells)
+    spans: list[list[int]] = []
+
+    def build(prefix: list[int], remaining: int) -> None:
+        slots_left = span_count - len(prefix)
+        if slots_left == 0:
+            if remaining == 0:
+                spans.append(prefix.copy())
+            return
+        min_value = max(1, remaining - max_cells * (slots_left - 1))
+        max_value = min(max_cells, remaining - (slots_left - 1))
+        for value in range(max_value, min_value - 1, -1):
+            prefix.append(value)
+            build(prefix, remaining - value)
+            prefix.pop()
+
+    build([], total_cells)
+    return min(
+        spans,
+        key=lambda s: (
+            len(set(s)),
+            -min(s),
+            max(s) - min(s),
+            tuple(-v for v in s),
+        ),
+    )
 
 
 def _baseplate_exports(
@@ -229,33 +253,56 @@ def _baseplate_exports(
     split: bool,
 ) -> list[tuple[str, bytes]]:
     cell = project.grid.cell_mm
-    if split:
-        x_spans = _baseplate_split_ranges(grid_w, project.printer.bed_x_mm, cell)
-        y_spans = _baseplate_split_ranges(grid_d, project.printer.bed_y_mm, cell)
-    else:
-        x_spans = [(0, grid_w)]
-        y_spans = [(0, grid_d)]
+    if not split:
+        return [
+            (
+                "baseplate.stl",
+                generate_baseplate_stl(
+                    project,
+                    grid_w=grid_w,
+                    grid_d=grid_d,
+                    style_plate=style_plate,
+                    style_hole=style_hole,
+                    enable_magnet=enable_magnet,
+                ),
+            )
+        ]
+
+    x_spans = _balanced_baseplate_axis_cells(grid_w, project.printer.bed_x_mm, cell)
+    y_spans = _balanced_baseplate_axis_cells(grid_d, project.printer.bed_y_mm, cell)
+    shape_counts: dict[tuple[int, int], int] = {}
+    for tile_d in y_spans:
+        for tile_w in x_spans:
+            shape_counts[(tile_w, tile_d)] = shape_counts.get((tile_w, tile_d), 0) + 1
+
+    if len(shape_counts) == 1 and next(iter(shape_counts.values())) == 1:
+        tile_w, tile_d = next(iter(shape_counts))
+        return [
+            (
+                "baseplate.stl",
+                generate_baseplate_stl(
+                    project,
+                    grid_w=tile_w,
+                    grid_d=tile_d,
+                    style_plate=style_plate,
+                    style_hole=style_hole,
+                    enable_magnet=enable_magnet,
+                ),
+            )
+        ]
 
     exports: list[tuple[str, bytes]] = []
-    for row, (y0_cells, dy_cells) in enumerate(y_spans, start=1):
-        for col, (x0_cells, dx_cells) in enumerate(x_spans, start=1):
-            cut_box = [
-                x0_cells * cell,
-                y0_cells * cell,
-                (x0_cells + dx_cells) * cell,
-                (y0_cells + dy_cells) * cell,
-            ]
-            data = generate_baseplate_stl(
-                project,
-                grid_w=grid_w,
-                grid_d=grid_d,
-                cut_box=cut_box,
-                style_plate=style_plate,
-                style_hole=style_hole,
-                enable_magnet=enable_magnet,
-            )
-            name = f"baseplate-{row}-{col}.stl" if (len(x_spans) > 1 or len(y_spans) > 1) else "baseplate.stl"
-            exports.append((name, data))
+    for (tile_w, tile_d), count in sorted(shape_counts.items(), key=lambda item: (-item[0][0] * item[0][1], item[0])):
+        data = generate_baseplate_stl(
+            project,
+            grid_w=tile_w,
+            grid_d=tile_d,
+            style_plate=style_plate,
+            style_hole=style_hole,
+            enable_magnet=enable_magnet,
+        )
+        for idx in range(1, count + 1):
+            exports.append((f"baseplate-{tile_w}x{tile_d}-copy-{idx:03d}.stl", data))
     return exports
 
 

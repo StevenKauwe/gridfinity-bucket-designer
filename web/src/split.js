@@ -88,14 +88,41 @@ export function naiveSplitBucket(bucket, project) {
   return parts;
 }
 
-export function baseplateSplitRanges(totalCells, bedSize, cell) {
+export function balancedBaseplateAxisCells(totalCells, bedSize, cell) {
   const maxCells = Math.max(1, Math.floor(bedSize / cell));
-  const ranges = [];
-  let cursor = 0;
-  while (cursor < totalCells) {
-    const count = Math.min(maxCells, totalCells - cursor);
-    ranges.push([cursor, count]);
-    cursor += count;
+  const spanCount = Math.ceil(totalCells / maxCells);
+  const spans = [];
+
+  function build(prefix, remaining) {
+    const slotsLeft = spanCount - prefix.length;
+    if (slotsLeft === 0) {
+      if (remaining === 0) spans.push([...prefix]);
+      return;
+    }
+    const minValue = Math.max(1, remaining - maxCells * (slotsLeft - 1));
+    const maxValue = Math.min(maxCells, remaining - (slotsLeft - 1));
+    for (let value = maxValue; value >= minValue; value--) {
+      prefix.push(value);
+      build(prefix, remaining - value);
+      prefix.pop();
+    }
   }
-  return ranges;
+
+  build([], totalCells);
+  spans.sort((a, b) => {
+    const uniqueA = new Set(a).size;
+    const uniqueB = new Set(b).size;
+    if (uniqueA !== uniqueB) return uniqueA - uniqueB;
+    const minA = Math.min(...a);
+    const minB = Math.min(...b);
+    if (minA !== minB) return minB - minA;
+    const spreadA = Math.max(...a) - minA;
+    const spreadB = Math.max(...b) - minB;
+    if (spreadA !== spreadB) return spreadA - spreadB;
+    for (let i = 0; i < Math.min(a.length, b.length); i++) {
+      if (a[i] !== b[i]) return b[i] - a[i];
+    }
+    return a.length - b.length;
+  });
+  return spans[0];
 }

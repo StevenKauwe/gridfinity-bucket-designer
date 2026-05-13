@@ -1,9 +1,18 @@
 // Gridfinity Bucket Designer — vanilla JS frontend (browser-only WASM build).
-import { defaultProject as _defaultProject } from "./src/models.js";
+import {
+  defaultProject as _defaultProject,
+  defaultBucket,
+  hydrateBucketCells,
+  bucketCellSet,
+  cellKey,
+  recomputeBoundsFromCells,
+  translateBucketCells,
+  rotateBucketCells90,
+} from "./src/models.js";
 import { validateProject } from "./src/validate.js";
-import { naiveSplitBucket, baseplateSplitRanges } from "./src/split.js";
+import { naiveSplitBucket, balancedBaseplateAxisCells } from "./src/split.js";
 import { generateBucketStl, generateBaseplateStl } from "./src/cad.js";
-import { openPreview } from "./src/preview.js";
+import { openPreview, openPreviewScene } from "./src/preview.js";
 
 // JSZip from CDN for multi-file export.
 import JSZip from "https://cdn.jsdelivr.net/npm/jszip@3.10.1/+esm";
@@ -11,9 +20,13 @@ import JSZip from "https://cdn.jsdelivr.net/npm/jszip@3.10.1/+esm";
 const SVG_NS = "http://www.w3.org/2000/svg";
 const defaultProject = _defaultProject;
 
+// Drawer wall thickness for visualization (mm). Purely visual — does not
+// reduce interior buildable area.
+const DRAWER_WALL_MM = 16;
+
 const state = {
   project: defaultProject(),
-  tool: "draw-base",
+  tool: "box",
   snap: true,
   selectedId: null,
   scale: 1.5, // px per mm
@@ -29,20 +42,19 @@ function pxToMm(v) { return v / state.scale; }
 
 function svgPoint(evt) {
   const rect = editor.getBoundingClientRect();
-  return { x: pxToMm(evt.clientX - rect.left), y: pxToMm(evt.clientY - rect.top) };
-}
-
-function snapMm(v, cell) {
-  if (!state.snap) return v;
-  return Math.round(v / cell) * cell;
-}
-
-function snapToGridCell(v, cell) {
-  return Math.round(v / cell);
+  return {
+    x: pxToMm(evt.clientX - rect.left) - DRAWER_WALL_MM,
+    y: pxToMm(evt.clientY - rect.top) - DRAWER_WALL_MM,
+  };
 }
 
 function clamp(v, min, max) {
   return Math.min(max, Math.max(min, v));
+}
+
+function pointToCell(p) {
+  const cell = state.project.grid.cell_mm;
+  return { cx: Math.floor(p.x / cell), cy: Math.floor(p.y / cell) };
 }
 
 function startCellForDraw(v, max, cell) {
@@ -80,6 +92,16 @@ function drawRectFromDrag(startCellX, startCellY, p) {
   };
 }
 
+// Find which bucket owns a given cell (if any). Returns bucket or null.
+function bucketAtCell(cx, cy) {
+  for (let i = state.project.buckets.length - 1; i >= 0; i--) {
+    const b = state.project.buckets[i];
+    const set = bucketCellSet(b);
+    if (set.has(cellKey(cx, cy))) return b;
+  }
+  return null;
+}
+
 // ---------- Undo / Redo ----------
 function snapshot() {
   state.undo.push(JSON.stringify(state.project));
@@ -90,6 +112,7 @@ function undo() {
   if (!state.undo.length) return;
   state.redo.push(JSON.stringify(state.project));
   state.project = JSON.parse(state.undo.pop());
+  hydrateAllBuckets();
   syncToolbarFromProject();
   render();
 }
@@ -97,8 +120,13 @@ function redo() {
   if (!state.redo.length) return;
   state.undo.push(JSON.stringify(state.project));
   state.project = JSON.parse(state.redo.pop());
+  hydrateAllBuckets();
   syncToolbarFromProject();
   render();
+}
+
+function hydrateAllBuckets() {
+  for (const b of state.project.buckets) hydrateBucketCells(b);
 }
 
 // ---------- Render ----------
@@ -106,71 +134,85 @@ function render() {
   while (editor.firstChild) editor.removeChild(editor.firstChild);
 
   const cell = state.project.grid.cell_mm;
-  const nextGridX = Math.ceil(state.project.drawer.width_mm / cell) * cell;
-  const nextGridY = Math.ceil(state.project.drawer.depth_mm / cell) * cell;
-  const canvasWidthMm = Math.max(state.project.drawer.width_mm, nextGridX) + (nextGridX > state.project.drawer.width_mm ? 4 : 0);
-  const canvasDepthMm = Math.max(state.project.drawer.depth_mm, nextGridY) + (nextGridY > state.project.drawer.depth_mm ? 4 : 0);
-  const W = mmToPx(state.project.drawer.width_mm);
-  const D = mmToPx(state.project.drawer.depth_mm);
-  const canvasW = mmToPx(canvasWidthMm);
-  const canvasD = mmToPx(canvasDepthMm);
-  editor.setAttribute("width", canvasW);
-  editor.setAttribute("height", canvasD);
-  editor.setAttribute("viewBox", `0 0 ${canvasW} ${canvasD}`);
+  const drawerW = state.project.drawer.width_mm;
+  const drawerD = state.project.drawer.depth_mm;
+  const wallMm = DRAWER_WALL_MM;
 
-  // Drawer outline
-  const outline = document.createElementNS(SVG_NS, "rect");
-  outline.setAttribute("class", "drawer-outline");
-  outline.setAttribute("x", 0);
-  outline.setAttribute("y", 0);
-  outline.setAttribute("width", W);
-  outline.setAttribute("height", D);
-  editor.appendChild(outline);
+  const totalW = drawerW + 2 * wallMm;
+  const totalD = drawerD + 2 * wallMm;
+  const W = mmToPx(drawerW);
+  const D = mmToPx(drawerD);
+  const TW = mmToPx(totalW);
+  const TD = mmToPx(totalD);
+  const WALL = mmToPx(wallMm);
 
-  // Grid
-  for (let x = 0; x <= state.project.drawer.width_mm + 0.001; x += cell) {
+  editor.setAttribute("width", TW);
+  editor.setAttribute("height", TD);
+  editor.setAttribute("viewBox", `0 0 ${TW} ${TD}`);
+
+  // Drawer body (walls)
+  const outer = document.createElementNS(SVG_NS, "rect");
+  outer.setAttribute("class", "drawer-walls");
+  outer.setAttribute("x", 0);
+  outer.setAttribute("y", 0);
+  outer.setAttribute("width", TW);
+  outer.setAttribute("height", TD);
+  outer.setAttribute("rx", mmToPx(8));
+  editor.appendChild(outer);
+
+  // Interior group: shift content by drawer wall thickness so cell coords
+  // match svgPoint() output (which subtracts DRAWER_WALL_MM).
+  const interior = document.createElementNS(SVG_NS, "g");
+  interior.setAttribute("transform", `translate(${WALL},${WALL})`);
+  editor.appendChild(interior);
+
+  // Drawer interior background
+  const inside = document.createElementNS(SVG_NS, "rect");
+  inside.setAttribute("class", "drawer-interior");
+  inside.setAttribute("x", 0);
+  inside.setAttribute("y", 0);
+  inside.setAttribute("width", W);
+  inside.setAttribute("height", D);
+  interior.appendChild(inside);
+
+  // Grid lines
+  for (let x = 0; x <= drawerW + 0.001; x += cell) {
     const line = document.createElementNS(SVG_NS, "line");
     line.setAttribute("class", "grid-line");
     line.setAttribute("x1", mmToPx(x));
     line.setAttribute("x2", mmToPx(x));
     line.setAttribute("y1", 0);
     line.setAttribute("y2", D);
-    editor.appendChild(line);
+    interior.appendChild(line);
   }
-  for (let y = 0; y <= state.project.drawer.depth_mm + 0.001; y += cell) {
+  for (let y = 0; y <= drawerD + 0.001; y += cell) {
     const line = document.createElementNS(SVG_NS, "line");
     line.setAttribute("class", "grid-line");
     line.setAttribute("x1", 0);
     line.setAttribute("x2", W);
     line.setAttribute("y1", mmToPx(y));
     line.setAttribute("y2", mmToPx(y));
-    editor.appendChild(line);
+    interior.appendChild(line);
   }
 
-  if (nextGridX > state.project.drawer.width_mm + 0.001) {
-    const line = document.createElementNS(SVG_NS, "line");
-    line.setAttribute("class", "outside-grid-line");
-    line.setAttribute("x1", mmToPx(nextGridX));
-    line.setAttribute("x2", mmToPx(nextGridX));
-    line.setAttribute("y1", 0);
-    line.setAttribute("y2", D);
-    editor.appendChild(line);
-  }
-  if (nextGridY > state.project.drawer.depth_mm + 0.001) {
-    const line = document.createElementNS(SVG_NS, "line");
-    line.setAttribute("class", "outside-grid-line");
-    line.setAttribute("x1", 0);
-    line.setAttribute("x2", W);
-    line.setAttribute("y1", mmToPx(nextGridY));
-    line.setAttribute("y2", mmToPx(nextGridY));
-    editor.appendChild(line);
-  }
+  // Drawer outline (interior)
+  const outline = document.createElementNS(SVG_NS, "rect");
+  outline.setAttribute("class", "drawer-outline");
+  outline.setAttribute("x", 0);
+  outline.setAttribute("y", 0);
+  outline.setAttribute("width", W);
+  outline.setAttribute("height", D);
+  interior.appendChild(outline);
 
   // Buckets
-  validateThenDraw();
+  validateThenDraw(interior);
+
+  // Hit layer (transparent, on top of grid but underneath buckets we want
+  // to capture mousedowns on empty cells). We attach mousedown on `editor`
+  // but svgPoint converts to interior-local coords.
 }
 
-async function validateThenDraw() {
+async function validateThenDraw(group) {
   const issues = await runValidate();
   const issuesByBucket = {};
   for (const it of issues) {
@@ -179,66 +221,71 @@ async function validateThenDraw() {
   }
 
   for (const b of state.project.buckets) {
-    drawBucket(b, !!issuesByBucket[b.id]);
+    drawBucket(group, b, !!issuesByBucket[b.id]);
   }
 
   renderIssuesPanel(issues);
 }
 
-function drawBucket(b, invalid) {
+function drawBucket(group, b, invalid) {
   const cell = state.project.grid.cell_mm;
+  const selected = state.selectedId === b.id;
 
-  // Body
-  const body = document.createElementNS(SVG_NS, "rect");
-  body.setAttribute("class", "bucket-body" + (state.selectedId === b.id ? " selected" : "") + (invalid ? " bucket-invalid" : ""));
-  body.setAttribute("x", mmToPx(b.body_mm.x));
-  body.setAttribute("y", mmToPx(b.body_mm.y));
-  body.setAttribute("width", mmToPx(b.body_mm.w));
-  body.setAttribute("height", mmToPx(b.body_mm.d));
-  body.setAttribute("rx", mmToPx(b.corner_radius_mm || 0));
-  body.dataset.id = b.id;
-  body.addEventListener("mousedown", (e) => onBucketMouseDown(e, b));
-  editor.appendChild(body);
-
-  // Base (dashed)
-  const base = document.createElementNS(SVG_NS, "rect");
-  base.setAttribute("class", "bucket-base");
-  base.setAttribute("x", mmToPx(b.base_cells.x * cell));
-  base.setAttribute("y", mmToPx(b.base_cells.y * cell));
-  base.setAttribute("width", mmToPx(b.base_cells.w * cell));
-  base.setAttribute("height", mmToPx(b.base_cells.d * cell));
-  editor.appendChild(base);
-
-  if (state.selectedId === b.id && b.split?.enabled && b.split?.strategy === "naive") {
-    drawNaiveSplitPreview(b);
+  // Each occupied cell as its own rounded rect.
+  for (const [cx, cy] of b.cells_xy || []) {
+    const r = document.createElementNS(SVG_NS, "rect");
+    r.setAttribute("class", "bucket-cell" + (selected ? " selected" : "") + (invalid ? " bucket-invalid" : ""));
+    r.setAttribute("x", mmToPx(cx * cell));
+    r.setAttribute("y", mmToPx(cy * cell));
+    r.setAttribute("width", mmToPx(cell));
+    r.setAttribute("height", mmToPx(cell));
+    r.setAttribute("rx", mmToPx(2));
+    r.dataset.id = b.id;
+    r.dataset.cx = cx;
+    r.dataset.cy = cy;
+    r.addEventListener("mousedown", (e) => onBucketCellMouseDown(e, b, cx, cy));
+    group.appendChild(r);
   }
 
-  // Resize handles when selected
-  if (state.selectedId === b.id) {
-    const editingBody = state.tool === "edit-body";
-    const target = editingBody ? b.body_mm : null;
-    if (editingBody) {
-      drawHandle(b.body_mm.x + b.body_mm.w, b.body_mm.y + b.body_mm.d, b, "body-se");
-    } else {
-      // base handle in mm at SE corner of base footprint
-      drawHandle((b.base_cells.x + b.base_cells.w) * cell, (b.base_cells.y + b.base_cells.d) * cell, b, "base-se");
-    }
+  // Body outline (mm-bbox).
+  if (b.body_mm.w > 0 && b.body_mm.d > 0) {
+    const body = document.createElementNS(SVG_NS, "rect");
+    body.setAttribute("class", "bucket-body" + (selected ? " selected" : ""));
+    body.setAttribute("x", mmToPx(b.body_mm.x));
+    body.setAttribute("y", mmToPx(b.body_mm.y));
+    body.setAttribute("width", mmToPx(b.body_mm.w));
+    body.setAttribute("height", mmToPx(b.body_mm.d));
+    body.setAttribute("rx", mmToPx(b.corner_radius_mm || 0));
+    group.appendChild(body);
+  }
+
+  if (selected && b.split?.enabled && b.split?.strategy === "naive") {
+    drawNaiveSplitPreview(group, b);
+  }
+
+  // Move handle in centroid of cells (always rendered, so user can grab it
+  // to translate the bucket regardless of tool mode).
+  if ((b.cells_xy || []).length > 0) {
+    let sx = 0, sy = 0;
+    for (const [cx, cy] of b.cells_xy) { sx += cx + 0.5; sy += cy + 0.5; }
+    const cx = sx / b.cells_xy.length;
+    const cy = sy / b.cells_xy.length;
+    const handle = document.createElementNS(SVG_NS, "g");
+    handle.setAttribute("class", "move-handle" + (selected ? " selected" : ""));
+    handle.setAttribute("transform", `translate(${mmToPx(cx * cell)},${mmToPx(cy * cell)})`);
+    const ring = document.createElementNS(SVG_NS, "circle");
+    ring.setAttribute("r", 11);
+    handle.appendChild(ring);
+    const cross = document.createElementNS(SVG_NS, "path");
+    cross.setAttribute("d", "M-5,0 L5,0 M0,-5 L0,5");
+    cross.setAttribute("class", "move-handle-cross");
+    handle.appendChild(cross);
+    handle.addEventListener("mousedown", (e) => onMoveHandleMouseDown(e, b));
+    group.appendChild(handle);
   }
 }
 
-function drawHandle(xMm, yMm, b, kind) {
-  const h = document.createElementNS(SVG_NS, "rect");
-  h.setAttribute("class", "handle");
-  const s = 8;
-  h.setAttribute("x", mmToPx(xMm) - s / 2);
-  h.setAttribute("y", mmToPx(yMm) - s / 2);
-  h.setAttribute("width", s);
-  h.setAttribute("height", s);
-  h.addEventListener("mousedown", (e) => onHandleMouseDown(e, b, kind));
-  editor.appendChild(h);
-}
-
-function drawNaiveSplitPreview(b) {
+function drawNaiveSplitPreview(group, b) {
   const bedX = state.project.printer.bed_x_mm;
   const bedY = state.project.printer.bed_y_mm;
   if (bedX <= 0 || bedY <= 0) return;
@@ -269,7 +316,7 @@ function drawNaiveSplitPreview(b) {
     line.setAttribute("x2", mmToPx(x));
     line.setAttribute("y1", mmToPx(b.body_mm.y));
     line.setAttribute("y2", mmToPx(b.body_mm.y + b.body_mm.d));
-    editor.appendChild(line);
+    group.appendChild(line);
   }
 
   for (let i = 1; i < yRanges.length; i += 1) {
@@ -280,7 +327,7 @@ function drawNaiveSplitPreview(b) {
     line.setAttribute("x2", mmToPx(b.body_mm.x + b.body_mm.w));
     line.setAttribute("y1", mmToPx(y));
     line.setAttribute("y2", mmToPx(y));
-    editor.appendChild(line);
+    group.appendChild(line);
   }
 }
 
@@ -337,15 +384,28 @@ function renderIssuesPanel(issues) {
 let dragState = null;
 
 editor.addEventListener("mousedown", (e) => {
-  if (e.target !== editor) return;
+  // Drag-rect / paint on empty space. Bucket cells / handles handle their own
+  // mousedown events (which call stopPropagation).
   const p = svgPoint(e);
-  if (state.tool === "draw-base") {
-    const cell = state.project.grid.cell_mm;
-    const cx = startCellForDraw(p.x, state.project.drawer.width_mm, cell);
-    const cy = startCellForDraw(p.y, state.project.drawer.depth_mm, cell);
-    dragState = { kind: "draw-base", startCellX: cx, startCellY: cy, draftEl: null };
-  } else if (state.tool === "select" || state.tool === "edit-body" || state.tool === "delete") {
+  const { cx, cy } = pointToCell(p);
+  const cell = state.project.grid.cell_mm;
+
+  if (state.tool === "box") {
+    const startCx = startCellForDraw(p.x, state.project.drawer.width_mm, cell);
+    const startCy = startCellForDraw(p.y, state.project.drawer.depth_mm, cell);
     selectBucket(null);
+    dragState = { kind: "box-draw", startCellX: startCx, startCellY: startCy, draftEl: null };
+  } else if (state.tool === "path") {
+    // Start a new bucket with this cell, then paint adjacent cells as drag.
+    if (cx < 0 || cy < 0) return;
+    snapshot();
+    const id = `bucket-${Date.now()}`;
+    const base = { x: cx, y: cy, w: 1, d: 1 };
+    const body = { x: cx * cell, y: cy * cell, w: cell, d: cell };
+    const b = defaultBucket(id, base, body, state.project.defaults);
+    state.project.buckets.push(b);
+    selectBucket(id);
+    dragState = { kind: "path-paint", bucketId: id };
     render();
   }
 });
@@ -355,12 +415,14 @@ editor.addEventListener("mousemove", (e) => {
   const p = svgPoint(e);
   const cell = state.project.grid.cell_mm;
 
-  if (dragState.kind === "draw-base") {
+  if (dragState.kind === "box-draw") {
     const draft = drawRectFromDrag(dragState.startCellX, dragState.startCellY, p);
     if (!dragState.draftEl) {
       dragState.draftEl = document.createElementNS(SVG_NS, "rect");
       dragState.draftEl.setAttribute("class", "draft");
-      editor.appendChild(dragState.draftEl);
+      // Append draft into the interior group (last <g> child of editor).
+      const group = editor.querySelector("g");
+      group.appendChild(dragState.draftEl);
     }
     dragState.draftEl.setAttribute("x", mmToPx(draft.body.x));
     dragState.draftEl.setAttribute("y", mmToPx(draft.body.y));
@@ -368,88 +430,52 @@ editor.addEventListener("mousemove", (e) => {
     dragState.draftEl.setAttribute("height", mmToPx(draft.body.d));
     dragState.cells = draft.cells;
     dragState.body = draft.body;
+  } else if (dragState.kind === "path-paint" || dragState.kind === "path-extend") {
+    const { cx, cy } = pointToCell(p);
+    if (cx < 0 || cy < 0) return;
+    const b = state.project.buckets.find((x) => x.id === dragState.bucketId);
+    if (!b) return;
+    const set = bucketCellSet(b);
+    if (set.has(cellKey(cx, cy))) return;
+    // Don't paint into a cell already owned by another bucket (avoid overlap).
+    const owner = bucketAtCell(cx, cy);
+    if (owner && owner.id !== b.id) return;
+    b.cells_xy.push([cx, cy]);
+    recomputeBoundsFromCells(b, cell);
+    render();
   } else if (dragState.kind === "move-bucket") {
-    const dx = p.x - dragState.lastX;
-    const dy = p.y - dragState.lastY;
-    dragState.lastX = p.x;
-    dragState.lastY = p.y;
+    const dx = p.x - dragState.startX;
+    const dy = p.y - dragState.startY;
+    const dxCells = Math.round(dx / cell);
+    const dyCells = Math.round(dy / cell);
+    const targetDx = dxCells - dragState.appliedDx;
+    const targetDy = dyCells - dragState.appliedDy;
+    if (targetDx === 0 && targetDy === 0) return;
     const b = state.project.buckets.find((x) => x.id === dragState.bucketId);
     if (!b) return;
-    if (state.snap) {
-      // snap base to whole cells; move body by same delta
-      const cell = state.project.grid.cell_mm;
-      dragState.accumX = (dragState.accumX || 0) + dx;
-      dragState.accumY = (dragState.accumY || 0) + dy;
-      const dxCells = Math.round(dragState.accumX / cell);
-      const dyCells = Math.round(dragState.accumY / cell);
-      if (dxCells || dyCells) {
-        b.base_cells.x += dxCells;
-        b.base_cells.y += dyCells;
-        b.body_mm.x += dxCells * cell;
-        b.body_mm.y += dyCells * cell;
-        dragState.accumX -= dxCells * cell;
-        dragState.accumY -= dyCells * cell;
-        render();
-      }
-    } else {
-      b.body_mm.x += dx;
-      b.body_mm.y += dy;
-      const cell = state.project.grid.cell_mm;
-      b.base_cells.x = Math.round(b.body_mm.x / cell);
-      b.base_cells.y = Math.round(b.body_mm.y / cell);
-      render();
-    }
-  } else if (dragState.kind === "resize-base") {
-    const cell = state.project.grid.cell_mm;
-    const b = state.project.buckets.find((x) => x.id === dragState.bucketId);
-    if (!b) return;
-    const cx = snapToGridCell(p.x, cell);
-    const cy = snapToGridCell(p.y, cell);
-    b.base_cells.w = Math.max(1, cx - b.base_cells.x);
-    b.base_cells.d = Math.max(1, cy - b.base_cells.y);
-    // also resize body to match base when no overflow editing
-    b.body_mm.w = b.base_cells.w * cell;
-    b.body_mm.d = b.base_cells.d * cell;
+    translateBucketCells(b, targetDx, targetDy, cell);
+    dragState.appliedDx = dxCells;
+    dragState.appliedDy = dyCells;
     render();
-  } else if (dragState.kind === "resize-body") {
-    const b = state.project.buckets.find((x) => x.id === dragState.bucketId);
-    if (!b) return;
-    const newW = Math.max(5, p.x - b.body_mm.x);
-    const newD = Math.max(5, p.y - b.body_mm.y);
-    b.body_mm.w = state.snap ? Math.round(newW * 2) / 2 : newW;
-    b.body_mm.d = state.snap ? Math.round(newD * 2) / 2 : newD;
-    render();
+  } else if (dragState.kind === "erase-drag") {
+    const { cx, cy } = pointToCell(p);
+    const key = cellKey(cx, cy);
+    if (dragState.lastKey === key) return;
+    dragState.lastKey = key;
+    eraseCellAt(cx, cy);
   }
 });
 
 window.addEventListener("mouseup", () => {
   if (!dragState) return;
-  if (dragState.kind === "draw-base" && dragState.cells) {
+  if (dragState.kind === "box-draw" && dragState.cells) {
     snapshot();
     const cell = state.project.grid.cell_mm;
     const c = dragState.cells;
     const body = dragState.body || { x: c.x * cell, y: c.y * cell, w: c.w * cell, d: c.d * cell };
     const id = `bucket-${Date.now()}`;
-    state.project.buckets.push({
-      id,
-      name: `Bucket ${state.project.buckets.length + 1}`,
-      base_cells: { ...c },
-      body_mm: { ...body },
-      height_mm: state.project.defaults.bucket_height_mm,
-      wall_thickness_mm: state.project.defaults.wall_thickness_mm,
-      floor_thickness_mm: state.project.defaults.floor_thickness_mm,
-      corner_radius_mm: state.project.defaults.corner_radius_mm,
-      label: { enabled: false, text: "", style: "front-scoop" },
-      dividers: [],
-      connectors: { enabled: false, type: "none" },
-      split: { enabled: true, strategy: "naive", parts: [] },
-      include_lip: true,
-      magnet_holes: false,
-      screw_holes: false,
-      only_corners_holes: false,
-      scoop: 0,
-      style_tab: 5,
-    });
+    const b = defaultBucket(id, c, body, state.project.defaults);
+    state.project.buckets.push(b);
     selectBucket(id);
   }
   if (dragState.draftEl) dragState.draftEl.remove();
@@ -457,32 +483,49 @@ window.addEventListener("mouseup", () => {
   render();
 });
 
-function onBucketMouseDown(e, b) {
+function onBucketCellMouseDown(e, b, cx, cy) {
   e.stopPropagation();
-  if (state.tool === "delete") {
+  const cell = state.project.grid.cell_mm;
+  if (state.tool === "erase") {
     snapshot();
-    state.project.buckets = state.project.buckets.filter((x) => x.id !== b.id);
-    if (state.selectedId === b.id) selectBucket(null);
-    render();
+    eraseCellAt(cx, cy);
+    dragState = { kind: "erase-drag", lastKey: cellKey(cx, cy) };
     return;
   }
   selectBucket(b.id);
-  if (state.tool === "select") {
+  if (state.tool === "path") {
     snapshot();
-    const p = svgPoint(e);
-    dragState = { kind: "move-bucket", bucketId: b.id, lastX: p.x, lastY: p.y };
+    dragState = { kind: "path-extend", bucketId: b.id };
   }
   render();
 }
 
-function onHandleMouseDown(e, b, kind) {
+function onMoveHandleMouseDown(e, b) {
   e.stopPropagation();
+  selectBucket(b.id);
   snapshot();
-  if (kind === "base-se") {
-    dragState = { kind: "resize-base", bucketId: b.id };
-  } else if (kind === "body-se") {
-    dragState = { kind: "resize-body", bucketId: b.id };
+  const p = svgPoint(e);
+  dragState = {
+    kind: "move-bucket",
+    bucketId: b.id,
+    startX: p.x, startY: p.y,
+    appliedDx: 0, appliedDy: 0,
+  };
+  render();
+}
+
+function eraseCellAt(cx, cy) {
+  const cell = state.project.grid.cell_mm;
+  const owner = bucketAtCell(cx, cy);
+  if (!owner) return;
+  owner.cells_xy = owner.cells_xy.filter(([x, y]) => !(x === cx && y === cy));
+  if (owner.cells_xy.length === 0) {
+    state.project.buckets = state.project.buckets.filter((x) => x.id !== owner.id);
+    if (state.selectedId === owner.id) selectBucket(null);
+  } else {
+    recomputeBoundsFromCells(owner, cell);
   }
+  render();
 }
 
 function selectBucket(id) {
@@ -533,10 +576,6 @@ bindPropInput("propHeight", (b, v) => (b.height_mm = +v));
 bindPropInput("propWall", (b, v) => (b.wall_thickness_mm = +v));
 bindPropInput("propFloor", (b, v) => (b.floor_thickness_mm = +v));
 bindPropInput("propRadius", (b, v) => (b.corner_radius_mm = +v));
-bindPropInput("propBaseX", (b, v) => (b.base_cells.x = +v));
-bindPropInput("propBaseY", (b, v) => (b.base_cells.y = +v));
-bindPropInput("propBaseW", (b, v) => (b.base_cells.w = Math.max(1, +v)));
-bindPropInput("propBaseD", (b, v) => (b.base_cells.d = Math.max(1, +v)));
 bindPropInput("propBodyX", (b, v) => (b.body_mm.x = +v));
 bindPropInput("propBodyY", (b, v) => (b.body_mm.y = +v));
 bindPropInput("propBodyW", (b, v) => (b.body_mm.w = +v));
@@ -558,6 +597,30 @@ bindCheckbox("propOnlyCornersHoles", (b, v) => (b.only_corners_holes = v));
 bindPropInput("propScoop", (b, v) => (b.scoop = Math.max(0, Math.min(1, +v))));
 bindPropInput("propStyleTab", (b, v) => (b.style_tab = +v));
 
+// Base bbox edits move/resize the polyomino: x/y translate, w/d resize the
+// rectangle and replace cells_xy with a filled rectangle of the new size.
+function bindBaseBbox(id, fn) {
+  document.getElementById(id).addEventListener("change", (e) => {
+    const b = state.project.buckets.find((x) => x.id === state.selectedId);
+    if (!b) return;
+    snapshot();
+    const cell = state.project.grid.cell_mm;
+    fn(b, +e.target.value, cell);
+    render();
+  });
+}
+bindBaseBbox("propBaseX", (b, v, cell) => translateBucketCells(b, v - b.base_cells.x, 0, cell));
+bindBaseBbox("propBaseY", (b, v, cell) => translateBucketCells(b, 0, v - b.base_cells.y, cell));
+bindBaseBbox("propBaseW", (b, v, cell) => fillRect(b, b.base_cells.x, b.base_cells.y, Math.max(1, v), b.base_cells.d, cell));
+bindBaseBbox("propBaseD", (b, v, cell) => fillRect(b, b.base_cells.x, b.base_cells.y, b.base_cells.w, Math.max(1, v), cell));
+
+function fillRect(b, x, y, w, d, cellMm) {
+  const cells = [];
+  for (let dx = 0; dx < w; dx++) for (let dy = 0; dy < d; dy++) cells.push([x + dx, y + dy]);
+  b.cells_xy = cells;
+  recomputeBoundsFromCells(b, cellMm);
+}
+
 document.getElementById("propNaiveSplit").addEventListener("change", (e) => {
   const b = state.project.buckets.find((x) => x.id === state.selectedId);
   if (!b) return;
@@ -569,12 +632,6 @@ document.getElementById("propNaiveSplit").addEventListener("change", (e) => {
   render();
 });
 
-// Standard Gridfinity bin parameters (per the public spec):
-//   cell:   42 mm
-//   height: 7 mm units; 6u = 42 mm is the canonical bin height
-//   walls:  0.95 mm (single 0.4 perim, 2 walls)
-//   floor:  ~0.7 mm above foot top
-//   corner radius (outer): 3.75 mm (so it tracks the 7.5 mm corner of the cell)
 const GRIDFINITY_DEFAULTS = {
   height_mm: 42,
   wall_thickness_mm: 0.95,
@@ -593,13 +650,32 @@ document.getElementById("previewStl").addEventListener("click", async () => {
   } catch (err) { console.error(err); alert("Preview failed: " + err.message); }
 });
 
+document.getElementById("previewAll").addEventListener("click", async () => {
+  if (!state.project.buckets.length) { alert("No buckets to preview."); return; }
+  try {
+    await withProgress("Rendering preview...", async () => {
+      const items = [];
+      for (const bucket of state.project.buckets) {
+        items.push({
+          bytes: await generateBucketStl(bucket, state.project),
+          label: bucket.name || bucket.id,
+          x: bucket.body_mm.x,
+          y: -bucket.body_mm.y,
+          z: 0,
+          mirrorY: true,
+        });
+      }
+      openPreviewScene(items, "All buckets");
+    });
+  } catch (err) { console.error(err); alert("Preview all failed: " + err.message); }
+});
+
 document.getElementById("setGridfinityDefaults").addEventListener("click", () => {
   const b = state.project.buckets.find((x) => x.id === state.selectedId);
   if (!b) return;
   snapshot();
   const cell = state.project.grid.cell_mm;
   const clearance = state.project.grid.clearance_mm || 0;
-  // Body matches base footprint, inset by clearance on all sides.
   b.body_mm = {
     x: b.base_cells.x * cell + clearance,
     y: b.base_cells.y * cell + clearance,
@@ -623,6 +699,25 @@ document.getElementById("resetBody").addEventListener("click", () => {
   syncPropsPanel(); render();
 });
 
+document.getElementById("rotateLeft").addEventListener("click", () => rotateSelected(-1));
+document.getElementById("rotateRight").addEventListener("click", () => rotateSelected(1));
+document.getElementById("deleteBucket").addEventListener("click", () => {
+  if (!state.selectedId) return;
+  snapshot();
+  state.project.buckets = state.project.buckets.filter((b) => b.id !== state.selectedId);
+  selectBucket(null);
+  render();
+});
+
+function rotateSelected(dir) {
+  const b = state.project.buckets.find((x) => x.id === state.selectedId);
+  if (!b) return;
+  snapshot();
+  rotateBucketCells90(b, state.project.grid.cell_mm, dir);
+  syncPropsPanel();
+  render();
+}
+
 // ---------- Toolbar ----------
 function bindNumberInput(id, fn) {
   document.getElementById(id).addEventListener("change", (e) => {
@@ -633,6 +728,7 @@ function bindNumberInput(id, fn) {
 }
 bindNumberInput("drawerW", (v) => (state.project.drawer.width_mm = v));
 bindNumberInput("drawerD", (v) => (state.project.drawer.depth_mm = v));
+bindNumberInput("drawerH", (v) => (state.project.drawer.height_mm = v));
 bindNumberInput("gridSize", (v) => (state.project.grid.cell_mm = v));
 bindNumberInput("bedX", (v) => (state.project.printer.bed_x_mm = v));
 bindNumberInput("bedY", (v) => (state.project.printer.bed_y_mm = v));
@@ -661,8 +757,6 @@ document.getElementById("exportJson").addEventListener("click", () => {
   triggerDownload(blob, "gridfinity-project.json");
 });
 
-// Render every bucket part (or just one if naive split disabled). Returns
-// [{name, bytes}, ...] suitable for single-file or zip export.
 async function renderBucketAll(bucket) {
   let parts = [bucket];
   if (bucket.split && bucket.split.enabled && bucket.split.strategy === "naive") {
@@ -734,28 +828,28 @@ document.getElementById("exportBaseplate").addEventListener("click", async () =>
       const gridD = Math.floor(state.project.drawer.depth_mm / cell);
       if (gridW <= 0 || gridD <= 0) { alert("Drawer too small for any baseplate cell"); return; }
 
-      const xSpans = baseplateSplitRanges(gridW, state.project.printer.bed_x_mm, cell);
-      const ySpans = baseplateSplitRanges(gridD, state.project.printer.bed_y_mm, cell);
+      const xSpans = balancedBaseplateAxisCells(gridW, state.project.printer.bed_x_mm, cell);
+      const ySpans = balancedBaseplateAxisCells(gridD, state.project.printer.bed_y_mm, cell);
 
-      const exports = [];
-      let row = 1;
-      for (const [y0Cells, dyCells] of ySpans) {
-        let col = 1;
-        for (const [x0Cells, dxCells] of xSpans) {
-          const cutBox = [
-            x0Cells * cell, y0Cells * cell,
-            (x0Cells + dxCells) * cell, (y0Cells + dyCells) * cell,
-          ];
-          const stl = await generateBaseplateStl(state.project, {
-            gridW, gridD, cutBox,
-            stylePlate: 0, styleHole: 0, enableMagnet: false,
-          });
-          const single = xSpans.length === 1 && ySpans.length === 1;
-          const name = single ? "baseplate.stl" : `baseplate-${row}-${col}.stl`;
-          exports.push({ name, bytes: stl });
-          col++;
+      const shapeCounts = new Map();
+      for (const tileD of ySpans) {
+        for (const tileW of xSpans) {
+          const key = `${tileW}x${tileD}`;
+          shapeCounts.set(key, { tileW, tileD, count: (shapeCounts.get(key)?.count || 0) + 1 });
         }
-        row++;
+      }
+      const shapes = [...shapeCounts.values()].sort((a, b) => (b.tileW * b.tileD) - (a.tileW * a.tileD) || a.tileW - b.tileW || a.tileD - b.tileD);
+      const exports = [];
+      for (const shape of shapes) {
+        const stl = await generateBaseplateStl(state.project, {
+          gridW: shape.tileW, gridD: shape.tileD,
+          stylePlate: 0, styleHole: 0, enableMagnet: false,
+        });
+        for (let i = 1; i <= shape.count; i++) {
+          const single = shapes.length === 1 && shape.count === 1;
+          const name = single ? "baseplate.stl" : `baseplate-${shape.tileW}x${shape.tileD}-copy-${String(i).padStart(3, "0")}.stl`;
+          exports.push({ name, bytes: stl });
+        }
       }
       if (exports.length === 1) {
         triggerDownload(new Blob([exports[0].bytes], { type: "model/stl" }), exports[0].name);
@@ -793,6 +887,7 @@ document.getElementById("jsonFile").addEventListener("change", async (e) => {
   try {
     snapshot();
     state.project = JSON.parse(text);
+    hydrateAllBuckets();
     syncToolbarFromProject();
     selectBucket(null);
     render();
@@ -811,6 +906,7 @@ function triggerDownload(blob, name) {
 function syncToolbarFromProject() {
   document.getElementById("drawerW").value = state.project.drawer.width_mm;
   document.getElementById("drawerD").value = state.project.drawer.depth_mm;
+  document.getElementById("drawerH").value = state.project.drawer.height_mm ?? 80;
   document.getElementById("gridSize").value = state.project.grid.cell_mm;
   document.getElementById("bedX").value = state.project.printer.bed_x_mm;
   document.getElementById("bedY").value = state.project.printer.bed_y_mm;
@@ -823,8 +919,15 @@ function selectTool(tool) {
   render();
 }
 
+// Mouse-wheel rotates the selected bucket (90° per notch). Only when the
+// cursor is over the canvas and a bucket is selected; otherwise pass through.
+editor.addEventListener("wheel", (e) => {
+  if (!state.selectedId) return;
+  e.preventDefault();
+  rotateSelected(e.deltaY > 0 ? 1 : -1);
+}, { passive: false });
+
 window.addEventListener("keydown", (e) => {
-  // Ignore shortcuts while typing in form fields.
   if (e.target && /INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
   if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) { e.preventDefault(); undo(); }
   else if ((e.ctrlKey || e.metaKey) && (e.key === "y" || (e.key === "z" && e.shiftKey))) { e.preventDefault(); redo(); }
@@ -835,10 +938,12 @@ window.addEventListener("keydown", (e) => {
       selectBucket(null);
       render();
     }
-  } else if (e.key === "v" || e.key === "V") { selectTool("select"); }
-  else if (e.key === "d" || e.key === "D") { selectTool("draw-base"); }
-  else if (e.key === "e" || e.key === "E") { selectTool("edit-body"); }
-  else if (e.key === "x" || e.key === "X") { selectTool("delete"); }
+  } else if (e.key === "ArrowLeft" && state.selectedId) { e.preventDefault(); rotateSelected(-1); }
+  else if (e.key === "ArrowRight" && state.selectedId) { e.preventDefault(); rotateSelected(1); }
+  else if (e.key === "b" || e.key === "B") { selectTool("box"); }
+  else if (e.key === "p" || e.key === "P") { selectTool("path"); }
+  else if (e.key === "e" || e.key === "E") { selectTool("erase"); }
 });
 
+hydrateAllBuckets();
 render();

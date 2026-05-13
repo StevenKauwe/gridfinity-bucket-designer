@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { naiveSplitBucket, baseplateSplitRanges } from "../../src/split.js";
+import { naiveSplitBucket, balancedBaseplateAxisCells } from "../../src/split.js";
 import { defaultProject, defaultBucket } from "../../src/models.js";
 
 function project() {
@@ -55,15 +55,14 @@ describe("naiveSplitBucket", () => {
   });
 });
 
-describe("baseplateSplitRanges", () => {
-  it("splits cell count by build-plate width", () => {
-    expect(baseplateSplitRanges(11, 256, 42)).toEqual([
-      [0, 6],
-      [6, 5],
-    ]);
+describe("balancedBaseplateAxisCells", () => {
+  it("uses large repeated spans when possible", () => {
+    expect(balancedBaseplateAxisCells(15, 256, 42)).toEqual([5, 5, 5]);
+    expect(balancedBaseplateAxisCells(11, 256, 42)).toEqual([6, 5]);
+    expect(balancedBaseplateAxisCells(10, 256, 42)).toEqual([5, 5]);
   });
 
   it("returns a single span when plate fits", () => {
-    expect(baseplateSplitRanges(3, 256, 42)).toEqual([[0, 3]]);
+    expect(balancedBaseplateAxisCells(3, 256, 42)).toEqual([3]);
   });
 });

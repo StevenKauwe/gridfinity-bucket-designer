@@ -22,6 +22,7 @@
         <label>Drawer
           <input id="drawerW" type="number" value="500" title="Width (mm)" />
           <input id="drawerD" type="number" value="420" title="Depth (mm)" />
+          <input id="drawerH" type="number" value="80" title="Height (mm) — optional, validates that bins fit" />
         </label>
       </span>
 
@@ -50,28 +51,27 @@
 
       <span class="group">
         <button id="exportStl" class="primary">Export STL</button>
+        <button id="previewAll">Preview All</button>
         <button id="exportBaseplate">Baseplate</button>
         <button id="exportBundle">Bundle</button>
       </span>
     </header>
 
     <aside id="tools">
-      <button data-tool="select" title="Select / move (V)">
-        <span class="icon">↖</span><span>Select</span>
+      <button data-tool="box" class="active" title="Draw a rectangular bin (B)">
+        <span class="icon">▭</span><span>Box</span>
       </button>
-      <button data-tool="draw-base" class="active" title="Draw a Gridfinity base footprint (D)">
-        <span class="icon">▭</span><span>Draw</span>
+      <button data-tool="path" title="Paint cells to draw any grid shape (P)">
+        <span class="icon">✎</span><span>Path</span>
       </button>
-      <button data-tool="edit-body" title="Resize body separately from base (E)">
-        <span class="icon">⤢</span><span>Body</span>
-      </button>
-      <button data-tool="delete" title="Click a bucket to delete it (X)">
-        <span class="icon">✕</span><span>Delete</span>
+      <button data-tool="erase" title="Click cells to remove from a bin (E)">
+        <span class="icon">⌫</span><span>Erase</span>
       </button>
     </aside>
 
     <main id="canvasWrap">
       <svg id="editor" xmlns="http://www.w3.org/2000/svg"></svg>
+      <span id="hint">Click center handle to move · Wheel / ←→ to rotate selection</span>
       <span id="status"></span>
     </main>
 
@@ -90,7 +90,7 @@
         </fieldset>
 
         <fieldset>
-          <legend>Base cells</legend>
+          <legend>Base cells (bbox)</legend>
           <label>x <input id="propBaseX" type="number" /></label>
           <label>y <input id="propBaseY" type="number" /></label>
           <label>w <input id="propBaseW" type="number" min="1" /></label>
@@ -98,7 +98,7 @@
         </fieldset>
 
         <fieldset>
-          <legend>Body (mm)</legend>
+          <legend>Body (mm, bbox)</legend>
           <label>x <input id="propBodyX" type="number" step="0.5" /></label>
           <label>y <input id="propBodyY" type="number" step="0.5" /></label>
           <label>w <input id="propBodyW" type="number" step="0.5" /></label>
@@ -130,8 +130,11 @@
         </fieldset>
 
         <button id="previewStl" class="primary">Preview 3D</button>
+        <button id="rotateLeft">⟲ Rotate −90°</button>
+        <button id="rotateRight">⟳ Rotate +90°</button>
         <button id="resetBody">Reset body to base</button>
         <button id="setGridfinityDefaults">Reset to Gridfinity defaults</button>
+        <button id="deleteBucket" class="danger">Delete bucket</button>
       </div>
       <h3>Issues</h3>
       <ul id="issues"></ul>

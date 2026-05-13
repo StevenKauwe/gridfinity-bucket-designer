@@ -70,6 +70,16 @@ seam_x1 = false;
 seam_y0 = false;
 seam_y1 = false;
 
+/* [Part clipping] */
+// For naive split exports, render the parent bucket in parent-local
+// coordinates, clip out this part, then translate the part back to a local
+// origin. This preserves the parent's continuous underside foot pattern.
+clip_enabled = false;
+clip_x0 = 0;
+clip_y0 = 0;
+clip_x1 = body_w;
+clip_y1 = body_d;
+
 hole_options = bundle_hole_options(
     refined_hole = refined_holes,
     magnet_hole = magnet_holes,
@@ -105,7 +115,7 @@ module _foot() {
         translate([body_w / 2, body_d / 2, -TOLLERANCE])
             linear_extrude(BASE_HEIGHT + 2 * TOLLERANCE)
                 rounded_square(
-                    [body_w - TOLLERANCE, body_d - TOLLERANCE],
+                    [body_w, body_d],
                     BASE_TOP_RADIUS, center=true);
     }
 }
@@ -167,6 +177,7 @@ module _seam_cutter() {
             cube([body_w + 2, cut_depth, cut_z1 - cut_z0]);
 }
 
+module _bucket_geometry() {
 difference() {
     union() {
         _foot();
@@ -174,5 +185,18 @@ difference() {
         _wall_ring();
     }
     _compartment_cut();
-    _seam_cutter();
+    if (!clip_enabled)
+        _seam_cutter();
+}
+}
+
+if (clip_enabled) {
+    translate([-clip_x0, -clip_y0, 0])
+        intersection() {
+            _bucket_geometry();
+            translate([clip_x0, clip_y0, -TOLLERANCE])
+                cube([clip_x1 - clip_x0, clip_y1 - clip_y0, body_h + 2 * TOLLERANCE]);
+        }
+} else {
+    _bucket_geometry();
 }

@@ -1,6 +1,7 @@
 """Naive split logic — derived from the user's existing test suite, expanded."""
 from __future__ import annotations
 
+from backend.cad import _render_geometry
 from backend.main import _naive_split_bucket, _stl_exports_for_bucket
 
 from .conftest import make_bucket, make_project
@@ -37,6 +38,33 @@ def test_naive_split_preserves_partial_edge_overhang() -> None:
     assert parts[0].body_mm.x + parts[0].body_mm.w == parts[1].body_mm.x
     # The far edge keeps the overhang.
     assert parts[-1].body_mm.x + parts[-1].body_mm.w == 285
+
+
+def test_split_render_geometry_preserves_parent_foot_phase() -> None:
+    bucket = make_bucket(
+        "edge",
+        base_x=3,
+        base_y=7,
+        base_w=12,
+        base_d=4,
+        body_x=110,
+        body_y=268,
+        body_w=524,
+        body_d=220,
+    )
+    bucket.split.enabled = True
+    bucket.split.strategy = "naive"
+    project = make_project(bucket)
+    parts = _split(bucket, project)
+
+    geoms = [_render_geometry(part, project) for part in parts]
+
+    assert [part.body_mm.x for part in parts] == [110, 336, 588]
+    assert all(geom["clip_enabled"] for geom in geoms)
+    assert [geom["clip_x0"] for geom in geoms] == [0, 226, 478]
+    assert [geom["clip_x1"] for geom in geoms] == [226, 478, 524]
+    assert {geom["foot_offset_x"] for geom in geoms} == {-26}
+    assert {geom["foot_offset_y"] for geom in geoms} == {-16}
 
 
 def test_split_stl_export_returns_multiple_named_stls() -> None:
