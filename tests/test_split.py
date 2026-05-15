@@ -67,6 +67,14 @@ def test_split_render_geometry_preserves_parent_foot_phase() -> None:
     assert {geom["foot_offset_y"] for geom in geoms} == {-16}
 
 
+def test_render_geometry_enables_supportless_lip_by_default() -> None:
+    bucket = make_bucket("lip", base_w=2, body_w=84, body_d=42)
+    geom = _render_geometry(bucket, make_project(bucket))
+
+    assert geom["include_lip"] is True
+    assert geom["supportless_lip"] is True
+
+
 def test_split_stl_export_returns_multiple_named_stls() -> None:
     bucket = make_bucket("wide", base_w=8, body_w=320, body_d=42)
     bucket.split.enabled = True

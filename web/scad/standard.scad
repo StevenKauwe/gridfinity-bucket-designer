@@ -53,6 +53,7 @@ scoop = 0;
 
 /* [Gridfinity options] */
 include_lip = true;
+supportless_lip = true;
 magnet_holes = false;
 screw_holes = false;
 only_corners = false;
@@ -83,9 +84,14 @@ hole_options = bundle_hole_options(
 // the base and the stacking lip because render_wall adds the lip itself.
 bin_h = max(BASE_HEIGHT, body_h - (include_lip ? stacking_lip_height() : 0));
 wall_h = max(0, bin_h - BASE_HEIGHT);
-// Match new_bin(): with a lip, keep the stacking-lip support area solid.
+// Keep the lip guard area solid. Kennetek's default reserves only the inner
+// vertical support; supportless_lip keeps the full 45-degree support wedge
+// solid, trading a little cavity height for a reliably printable top lip.
+lip_guard_h = include_lip
+    ? (supportless_lip ? STACKING_LIP_SUPPORT_HEIGHT + STACKING_LIP_SIZE.x : STACKING_LIP_SUPPORT_HEIGHT)
+    : 0;
 infill_h = max(0, include_lip
-    ? bin_h - BASE_HEIGHT - STACKING_LIP_SUPPORT_HEIGHT
+    ? bin_h - BASE_HEIGHT - lip_guard_h
     : bin_h - BASE_HEIGHT);
 
 module _foot() {

@@ -68,4 +68,12 @@ describe("renderGeometry", () => {
     expect(r2.seam_x0).toBe(true);
     expect(r2.seam_x1).toBe(false);
   });
+
+  it("enables supportless top lip geometry by default", () => {
+    const b = bucket({ baseW: 2, baseD: 1 });
+    const r = renderGeometry(b, p());
+
+    expect(r.include_lip).toBe(true);
+    expect(r.supportless_lip).toBe(true);
+  });
 });

@@ -163,6 +163,7 @@ export function renderGeometry(bucket, project) {
     cell_mm: Number(cell),
     scoop: Number(bucket.scoop || 0),
     include_lip: bucket.include_lip !== false,
+    supportless_lip: true,
     magnet_holes: !!bucket.magnet_holes,
     screw_holes: !!bucket.screw_holes,
     only_corners: !!bucket.only_corners_holes,

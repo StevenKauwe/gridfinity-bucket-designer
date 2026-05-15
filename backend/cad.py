@@ -108,6 +108,7 @@ def _render_geometry(bucket: Bucket, project: Project) -> dict:
         "cell_mm": float(cell),
         "scoop": float(bucket.scoop),
         "include_lip": bool(bucket.include_lip),
+        "supportless_lip": True,
         "magnet_holes": bool(bucket.magnet_holes),
         "screw_holes": bool(bucket.screw_holes),
         "only_corners": bool(bucket.only_corners_holes),
